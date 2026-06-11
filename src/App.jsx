@@ -215,6 +215,11 @@ function Digits({ ms, big }) {
   const cell = (v, label) => (
     <div style={{ textAlign: "center" }}>
       <div style={{
+        fontSize: big ? "0.65rem" : "0.52rem",
+        letterSpacing: "0.15em", color: "#7C8BA1",
+        textTransform: "uppercase", marginBottom: big ? 6 : 2,
+      }}>{label}</div>
+      <div style={{
         fontFamily: "'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace",
         fontVariantNumeric: "tabular-nums",
         fontWeight: 600,
@@ -223,23 +228,20 @@ function Digits({ ms, big }) {
         color: "#FFD166",
         letterSpacing: big ? "0.02em" : 0,
       }}>{pad(v)}</div>
-      {big && <div style={{
-        fontSize: "0.65rem", letterSpacing: "0.2em", color: "#7C8BA1",
-        textTransform: "uppercase", marginTop: 6,
-      }}>{label}</div>}
     </div>
   );
   const sep = (
     <div className={big ? "tick" : ""} style={{
-      color: "#3A4A63", fontWeight: 600, alignSelf: big ? "flex-start" : "center",
+      color: "#3A4A63", fontWeight: 600,
       fontSize: big ? "clamp(1.6rem, 6vw, 3rem)" : "1rem",
-      fontFamily: "'IBM Plex Mono', monospace", paddingTop: big ? 4 : 0,
+      fontFamily: "'IBM Plex Mono', monospace",
+      paddingBottom: big ? 8 : 1,
     }}>:</div>
   );
   return (
-    <div style={{ display: "flex", gap: big ? 14 : 4, alignItems: "center", justifyContent: big ? "center" : "flex-end" }}>
+    <div style={{ display: "flex", gap: big ? 14 : 5, alignItems: "flex-end", justifyContent: big ? "center" : "flex-end" }}>
       {d > 0 && <>{cell(d, "days")}{sep}</>}
-      {cell(h, "hours")}{sep}{cell(m, "min")}{sep}{cell(s, "sec")}
+      {cell(h, "hrs")}{sep}{cell(m, "min")}{sep}{cell(s, "sec")}
     </div>
   );
 }
