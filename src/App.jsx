@@ -131,8 +131,7 @@ const MATCH_MINUTES = 135; // 90' + HT + stoppage buffer; knockouts may run long
 // ---------- Broadcaster presets (replay hubs, not score pages) ----------
 const COUNTRIES = [
   { id: "is", label: "Iceland — RÚV", links: [
-    { name: "RÚV Sjónvarp", url: "https://www.ruv.is/sjonvarp" },
-    { name: "RÚV Íþróttir", url: "https://www.ruv.is/ithrottir" },
+    { name: "RÚV dagskrá (this match's day)", url: (m) => `https://www.ruv.is/sjonvarp/dagskra/ruv/${ruvDate(m.t)}` },
   ]},
   { id: "uk", label: "United Kingdom — BBC / ITV (UK only)", links: [
     { name: "BBC iPlayer", url: "https://www.bbc.co.uk/iplayer" },
@@ -207,6 +206,14 @@ function fmtDateHeading(ts) {
 function isNightOwl(ts) {
   const h = new Date(ts).getHours();
   return h >= 23 || h < 7; // kickoff in your local dead of night
+}
+
+// RÚV's TV schedule lists anything starting before 4 AM (Iceland time)
+// on the PREVIOUS day's page. Iceland time = UTC year-round, so we
+// subtract 4 hours from the UTC kickoff and take that date.
+function ruvDate(t) {
+  const d = new Date(new Date(t).getTime() - 4 * 60 * 60 * 1000);
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
 }
 
 // ---------- components ----------
@@ -549,7 +556,7 @@ export default function App() {
                 </div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   {countryData.links.map((l) => (
-                    <a key={l.name} href={l.url} target="_blank" rel="noopener noreferrer" style={{
+                    <a key={l.name} href={typeof l.url === "function" ? l.url(m) : l.url} target="_blank" rel="noopener noreferrer" style={{
                       fontSize: "0.74rem", fontWeight: 700, textDecoration: "none",
                       color: "#0B1220", background: "#FFD166", borderRadius: 5,
                       padding: "7px 12px",
