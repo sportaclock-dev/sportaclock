@@ -268,13 +268,13 @@ const GOLF_EVENTS = [
 
 // ---------- SPORT CONFIG ----------
 const SPORTS = {
-  wc: {
-    icon: "⚽", label: "World Cup",
-    eyebrow: "World Cup 2026 · USA · Canada · Mexico",
+  football: {
+    icon: "⚽", label: "Football",
+    eyebrow: "Football · pick your competition",
     nextLabel: "Next kickoff", clockLabel: "TO KICKOFF",
     durationMin: 135,
-    stages: ["All","Groups","R32","R16","QF","SF","3rd Place","Final"],
-    replays: null, // uses the country broadcaster picker below
+    stages: ["All"],
+    replays: null, // per-league below
   },
   f1: {
     icon: "🏎", label: "F1",
@@ -312,10 +312,51 @@ const SPORTS = {
 };
 
 const SPORT_EVENTS = {
-  wc: WC_MATCHES,
+  football: WC_MATCHES, // used by the World Cup league (merged with live API data)
   f1: F1_RACES,
   nfl: NFL_EVENTS,
   golf: GOLF_EVENTS,
+};
+
+// ---------- FOOTBALL LEAGUES (inside the ⚽ Football tab) ----------
+const LEAGUES = {
+  wc: {
+    label: "World Cup", comp: "WC",
+    eyebrow: "World Cup 2026 · USA · Canada · Mexico",
+    stages: ["All","Groups","R32","R16","QF","SF","3rd Place","Final"],
+  },
+  pl: {
+    label: "Premier League", comp: "PL",
+    eyebrow: "Premier League 2026–27 · every match, live schedule",
+    stages: ["All"],
+  },
+  cl: {
+    label: "Champions League", comp: "CL",
+    eyebrow: "UEFA Champions League 2026–27 · live schedule",
+    stages: ["All","League Phase","Playoffs","R16","QF","SF","Final"],
+  },
+};
+
+// football-data.org stage codes → friendly Champions League labels
+const CL_STAGE = {
+  LEAGUE_STAGE: "League Phase",
+  PLAYOFFS: "Playoffs",
+  LAST_16: "R16",
+  QUARTER_FINALS: "QF",
+  SEMI_FINALS: "SF",
+  FINAL: "Final",
+};
+
+// Replay links for the non-World-Cup leagues (WC keeps its country picker)
+const LEAGUE_REPLAYS = {
+  pl: [
+    { name: "Sky Sports (UK)", url: "https://www.skysports.com/premier-league" },
+    { name: "Peacock (US)", url: "https://www.peacocktv.com/sports/premier-league" },
+  ],
+  cl: [
+    { name: "TNT Sports (UK)", url: "https://www.tntsports.co.uk/football/champions-league" },
+    { name: "Paramount+ (US)", url: "https://www.paramountplus.com" },
+  ],
 };
 
 // ---------- Broadcaster presets for World Cup replays ----------
@@ -467,13 +508,19 @@ function StagePill({ m }) {
 
 export default function App() {
   const [now, setNow] = useState(() => Date.now());
-  const [sport, setSport] = useState("wc");
+  const [sport, setSport] = useState("football");
+  const [league, setLeague] = useState("wc");
   const [tab, setTab] = useState("upcoming");
   const [country, setCountry] = useState("is");
   const [query, setQuery] = useState("");
   const [stage, setStage] = useState("All");
+  const [teamFilter, setTeamFilter] = useState(null);
   const [revealYT, setRevealYT] = useState(false);
-  const [api, setApi] = useState({ enabled: false, byTime: {} });
+  const [football, setFootball] = useState({
+    wc: { enabled: false, matches: [] },
+    pl: { enabled: false, matches: [] },
+    cl: { enabled: false, matches: [] },
+  });
   const [nflApi, setNflApi] = useState({ enabled: false, events: [] });
 
   useEffect(() => {
@@ -481,18 +528,19 @@ export default function App() {
     return () => clearInterval(id);
   }, []);
 
-  // Live World Cup bracket data (scores stripped server-side)
+  // Live football data for all three leagues (scores stripped server-side).
+  // WC merges into the built-in bracket; PL & CL are fully API-driven.
   useEffect(() => {
     let alive = true;
     const load = async () => {
-      try {
-        const r = await fetch("/api/matches");
-        const data = await r.json();
-        if (!alive || !data.enabled) return;
-        const byTime = {};
-        data.matches.forEach((m) => { byTime[m.utcDate] = m; });
-        setApi({ enabled: true, byTime });
-      } catch { /* site keeps working with the built-in schedule */ }
+      for (const [key, cfg] of Object.entries(LEAGUES)) {
+        try {
+          const r = await fetch(`/api/football/${cfg.comp}`);
+          const data = await r.json();
+          if (!alive || !data.enabled) continue;
+          setFootball((prev) => ({ ...prev, [key]: { enabled: true, matches: data.matches } }));
+        } catch { /* site keeps working with whatever it has */ }
+      }
     };
     load();
     const id = setInterval(load, 15 * 60 * 1000);
@@ -517,6 +565,9 @@ export default function App() {
   }, []);
 
   const cfg = SPORTS[sport];
+  const leagueCfg = sport === "football" ? LEAGUES[league] : null;
+  const stages = leagueCfg ? leagueCfg.stages : cfg.stages;
+  const eyebrow = leagueCfg ? leagueCfg.eyebrow : cfg.eyebrow;
   const tz = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone, []);
 
   const events = useMemo(() => {
@@ -525,6 +576,7 @@ export default function App() {
       return nflApi.events.map((e) => ({
         t: e.date,
         home: e.home, away: e.away,
+        homeCrest: e.homeLogo, awayCrest: e.awayLogo,
         venue: e.venue, city: e.city,
         tag: e.tag, stage: e.tag,
         sub: e.label,
@@ -533,12 +585,38 @@ export default function App() {
         kickoff: new Date(e.date).getTime(),
       }));
     }
+    // Football — Premier League & Champions League: fully API-driven
+    if (sport === "football" && league !== "wc") {
+      return (football[league].matches || [])
+        .map((m, i) => {
+          const stageLbl = league === "cl"
+            ? (CL_STAGE[m.stage] || "League Phase")
+            : "Regular season";
+          const tag = league === "pl"
+            ? (m.matchday ? `Matchday ${m.matchday}` : "Premier League")
+            : (stageLbl === "League Phase" && m.matchday ? `League Phase · MD${m.matchday}` : stageLbl);
+          return {
+            t: m.utcDate,
+            home: m.home || "TBD", away: m.away || "TBD",
+            homeCrest: m.homeCrest, awayCrest: m.awayCrest,
+            venue: "", city: "",
+            tag, stage: stageLbl, sub: "",
+            apiStatus: m.status,
+            id: `${league}-${i}`,
+            kickoff: new Date(m.utcDate).getTime(),
+          };
+        })
+        .sort((a, b) => a.kickoff - b.kickoff);
+    }
+    // World Cup (and everything else): built-in schedule, WC merged with API
     const base = SPORT_EVENTS[sport].map((m, i) => ({
       ...m, id: `${sport}-${i}`, kickoff: new Date(m.t).getTime(),
     }));
-    if (sport !== "wc") return base;
+    if (!(sport === "football" && league === "wc")) return base;
+    const byTime = {};
+    (football.wc.matches || []).forEach((m) => { byTime[m.utcDate] = m; });
     return base.map((m) => {
-      const a = api.byTime[m.t];
+      const a = byTime[m.t];
       if (!a) return m;
       const out = { ...m, apiStatus: a.status };
       if (m.stage !== "Groups") {
@@ -547,7 +625,7 @@ export default function App() {
       }
       return out;
     });
-  }, [sport, api, nflApi]);
+  }, [sport, league, football, nflApi]);
 
   const end = (m) => m.kickoff + (m.dur || cfg.durationMin) * 60 * 1000;
   const isLive = (m) => m.apiStatus
@@ -561,11 +639,34 @@ export default function App() {
     const q = query.trim().toLowerCase();
     return events.filter((m) => {
       if (stage !== "All" && m.stage !== stage) return false;
+      if (teamFilter && m.home !== teamFilter && m.away !== teamFilter) return false;
       if (!q) return true;
       return [m.home, m.away, m.title, m.sub, m.venue, m.city]
         .filter(Boolean).join(" ").toLowerCase().includes(q);
     });
-  }, [events, query, stage]);
+  }, [events, query, stage, teamFilter]);
+
+  // ---- clickable team logo bar (Premier League + NFL only) ----
+  const teamBar = useMemo(() => {
+    let source = null, first = null;
+    if (sport === "football" && league === "pl" && football.pl.enabled) {
+      source = events; first = "Liverpool";
+    } else if (sport === "nfl" && nflApi.enabled) {
+      source = events; first = "Eagles";
+    }
+    if (!source) return [];
+    const map = new Map();
+    source.forEach((m) => {
+      if (m.home && m.homeCrest && !map.has(m.home)) map.set(m.home, m.homeCrest);
+      if (m.away && m.awayCrest && !map.has(m.away)) map.set(m.away, m.awayCrest);
+    });
+    const teams = [...map.entries()]
+      .map(([name, crest]) => ({ name, crest }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    const idx = teams.findIndex((t) => t.name.includes(first));
+    if (idx > 0) teams.unshift(...teams.splice(idx, 1));
+    return teams;
+  }, [sport, league, events, football, nflApi]);
 
   const live = filtered.filter((m) => isLive(m));
   const upcoming = filtered.filter((m) => !isLive(m) && !isFinished(m) && now < end(m));
@@ -584,11 +685,15 @@ export default function App() {
   };
 
   const countryData = COUNTRIES.find((c) => c.id === country);
-  const switchSport = (s) => { setSport(s); setStage("All"); setQuery(""); };
+  const switchSport = (s) => { setSport(s); setStage("All"); setQuery(""); setTeamFilter(null); };
+  const switchLeague = (l) => { setLeague(l); setStage("All"); setQuery(""); setTeamFilter(null); };
 
   const ytQuery = (m) => {
     const matchup = m.home ? `${m.home} vs ${m.away}` : m.title;
-    const context = sport === "wc" ? "world cup 2026" : sport === "nfl" ? "NFL 2026" : "2026";
+    const context =
+      sport === "football"
+        ? (league === "wc" ? "world cup 2026" : league === "pl" ? "premier league" : "champions league")
+        : sport === "nfl" ? "NFL 2026" : "2026";
     return `https://www.youtube.com/results?search_query=${encodeURIComponent(`${matchup} ${context} highlights`)}`;
   };
 
@@ -638,7 +743,7 @@ export default function App() {
         {/* ---------- header ---------- */}
         <header style={{ padding: "34px 0 18px", borderBottom: "2px solid #2F9E68" }}>
           <div style={{ fontSize: "0.68rem", letterSpacing: "0.3em", color: "#2F9E68", textTransform: "uppercase", fontWeight: 700 }}>
-            {cfg.eyebrow}
+            {eyebrow}
           </div>
           <h1 style={{ fontWeight: 900, fontSize: "clamp(1.9rem, 7vw, 3rem)", margin: "6px 0 4px", letterSpacing: "-0.02em" }}>
             SPORTACLOCK
@@ -653,7 +758,7 @@ export default function App() {
           </div>
           <div style={{ color: "#3A4A63", fontSize: "0.72rem", marginTop: 6 }}>
             All times shown in your timezone: {tz}
-            {sport === "wc" && api.enabled && <span style={{ color: "#2F9E68" }}> · ● live bracket updates on</span>}
+            {sport === "football" && football[league].enabled && <span style={{ color: "#2F9E68" }}> · ● live fixture updates on</span>}
             {sport === "nfl" && nflApi.enabled && <span style={{ color: "#2F9E68" }}> · ● full 272-game schedule loaded</span>}
           </div>
         </header>
@@ -667,6 +772,17 @@ export default function App() {
           ))}
         </nav>
 
+        {/* ---------- football league picker ---------- */}
+        {sport === "football" && (
+          <div style={{ display: "flex", gap: 6, marginTop: 10, overflowX: "auto", paddingBottom: 2 }}>
+            {Object.entries(LEAGUES).map(([id, l]) => (
+              <button key={id} style={S.chip(league === id)} onClick={() => switchLeague(id)}>
+                {l.label}
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* ---------- next event hero ---------- */}
         {tab === "upcoming" && nextEvent && (
           <section style={{ ...S.card, marginTop: 16, padding: "22px 16px 18px", borderColor: "#2A3A57" }}>
@@ -677,7 +793,7 @@ export default function App() {
               <EventName ev={nextEvent} size="clamp(1.2rem, 5vw, 1.7rem)" />
             </div>
             <div style={{ textAlign: "center", color: "#9FB0C6", fontSize: "0.9rem", marginBottom: 16 }}>
-              <StagePill m={nextEvent} /> &nbsp; {nextEvent.venue}{nextEvent.city ? `, ${nextEvent.city}` : ""} · {fmtTime(nextEvent.kickoff)} your time
+              <StagePill m={nextEvent} /> &nbsp; {nextEvent.venue ? `${nextEvent.venue}${nextEvent.city ? `, ${nextEvent.city}` : ""} · ` : ""}{fmtTime(nextEvent.kickoff)} your time
               {nextEvent.sub && <div style={{ marginTop: 4, color: "#8FB89F" }}>{nextEvent.sub}</div>}
             </div>
             <Digits ms={nextEvent.kickoff - now} big />
@@ -713,15 +829,44 @@ export default function App() {
         <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 18 }}>
           <input
             style={S.input}
-            placeholder={sport === "wc" ? "Filter by team, stadium, or city…" : "Filter by event, venue, or city…"}
+            placeholder={sport === "football" ? "Filter by team, stadium, or city…" : "Filter by event, venue, or city…"}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
-          <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 2 }}>
-            {cfg.stages.map((s) => (
-              <button key={s} style={S.chip(stage === s)} onClick={() => setStage(s)}>{s}</button>
-            ))}
-          </div>
+          {stages.length > 1 && (
+            <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 2 }}>
+              {stages.map((s) => (
+                <button key={s} style={S.chip(stage === s)} onClick={() => setStage(s)}>{s}</button>
+              ))}
+            </div>
+          )}
+          {teamBar.length > 0 && (
+            <div>
+              <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 4 }}>
+                {teamBar.map((t) => (
+                  <button
+                    key={t.name}
+                    title={t.name}
+                    onClick={() => setTeamFilter(teamFilter === t.name ? null : t.name)}
+                    style={{
+                      flexShrink: 0, padding: 5, borderRadius: 8, cursor: "pointer",
+                      background: teamFilter === t.name ? "rgba(255,209,102,0.12)" : "transparent",
+                      border: "1px solid " + (teamFilter === t.name ? "#FFD166" : "#1E2B42"),
+                      opacity: teamFilter && teamFilter !== t.name ? 0.45 : 1,
+                    }}
+                  >
+                    <img src={t.crest} alt={t.name} loading="lazy"
+                      style={{ width: 26, height: 26, objectFit: "contain", display: "block" }} />
+                  </button>
+                ))}
+              </div>
+              {teamFilter && (
+                <div style={{ fontSize: "0.72rem", color: "#FFD166", marginTop: 2 }}>
+                  Showing only {teamFilter} — tap the logo again to see everyone
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* ---------- UPCOMING ---------- */}
@@ -729,7 +874,9 @@ export default function App() {
           <section>
             {upcoming.length === 0 && (
               <div style={{ ...S.card, color: "#7C8BA1", textAlign: "center" }}>
-                No upcoming events found. Clear the filter to see the full schedule.
+                {sport === "football" && league !== "wc" && !football[league].enabled
+                  ? "Fixtures load live from football-data.org — nothing yet. New-season schedules appear here as soon as they're announced."
+                  : "No upcoming events found. Clear the filter to see the full schedule."}
               </div>
             )}
             {groupByDay(upcoming).map((day) => (
@@ -753,7 +900,7 @@ export default function App() {
                         </div>
                         <div><EventName ev={m} /></div>
                         <div style={{ color: "#9FB0C6", fontSize: "0.88rem", marginTop: 3 }}>
-                          {fmtTime(m.kickoff)} · {m.venue}{m.city ? `, ${m.city}` : ""}
+                          {fmtTime(m.kickoff)}{m.venue ? ` · ${m.venue}${m.city ? `, ${m.city}` : ""}` : ""}
                         </div>
                         {m.sub && (
                           <div style={{ color: "#8FB89F", fontSize: "0.82rem", marginTop: 2 }}>{m.sub}</div>
@@ -782,7 +929,7 @@ export default function App() {
                 No results shown — only which events have finished. Jump straight to a replay.
                 Availability depends on broadcast rights in your country.
               </div>
-              {sport === "wc" && (
+              {sport === "football" && league === "wc" && (
                 <div style={{ marginTop: 12 }}>
                   <select
                     value={country}
@@ -815,7 +962,10 @@ export default function App() {
                 </div>
                 <div style={{ marginBottom: 8 }}><EventName ev={m} /></div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {(sport === "wc" ? countryData.links : cfg.replays).map((l) => (
+                  {(sport === "football"
+                    ? (league === "wc" ? countryData.links : LEAGUE_REPLAYS[league])
+                    : cfg.replays
+                  ).map((l) => (
                     <a key={l.name} href={typeof l.url === "function" ? l.url(m) : l.url} target="_blank" rel="noopener noreferrer" style={{
                       fontSize: "0.74rem", fontWeight: 700, textDecoration: "none",
                       color: "#0B1220", background: "#FFD166", borderRadius: 5,
@@ -844,8 +994,9 @@ export default function App() {
         )}
 
         <footer style={{ marginTop: 40, color: "#3A4A63", fontSize: "0.68rem", lineHeight: 1.6 }}>
-          Sportaclock · Ready. Tick. Kick. — World Cup: official FIFA kickoff times, knockout matchups fill in
-          automatically from football-data.org (scores stripped server-side). F1: 2026 FIA calendar with every session (practice, sprint qualifying, sprint, qualifying, race); session
+          Sportaclock · Ready. Tick. Kick. — Football: World Cup kickoff times are official FIFA, with knockout matchups
+          filling in automatically; Premier League and Champions League fixtures load live from football-data.org
+          (all scores stripped server-side, refreshed every 15 minutes, so rescheduled games stay current). F1: 2026 FIA calendar with every session (practice, sprint qualifying, sprint, qualifying, race); session
           times for rounds after Azerbaijan follow the typical weekend format and are provisional until confirmed.
           NFL: full 272-game schedule loads live from ESPN via our server (scores stripped server-side, refreshed
           hourly, so flexed games stay current); if the feed is unavailable, a built-in marquee schedule takes over. Golf: PGA Tour, DP World Tour and majors that Rory McIlroy is
