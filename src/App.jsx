@@ -842,7 +842,7 @@ export default function App() {
           )}
           {teamBar.length > 0 && (
             <div>
-              <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 4 }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, paddingBottom: 4 }}>
                 {teamBar.map((t) => (
                   <button
                     key={t.name}
