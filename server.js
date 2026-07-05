@@ -1,6 +1,7 @@
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
+import nflRoute from "./nfl.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -9,6 +10,9 @@ const TOKEN = process.env.FOOTBALL_DATA_TOKEN;
 
 const CACHE_MS = 15 * 60 * 1000; // 15 minutes
 let cache = { time: 0, data: null };
+
+// Full NFL schedule (ESPN data, scores stripped in nfl.js)
+app.get("/api/nfl", nflRoute);
 
 app.get("/api/matches", async (req, res) => {
   try {

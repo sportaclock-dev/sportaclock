@@ -9,8 +9,8 @@
      { enabled: false } and the site falls back to the
      built-in marquee schedule.
 
-   Wiring (Express):
-     const nflRoute = require("./nfl");
+   Wiring (Express, in server.js):
+     import nflRoute from "./nfl.js";
      app.get("/api/nfl", nflRoute);
    ============================================================ */
 
@@ -66,7 +66,7 @@ function mapEvent(ev) {
   };
 }
 
-module.exports = async function nflRoute(req, res) {
+export default async function nflRoute(req, res) {
   try {
     if (cache.payload && Date.now() - cache.at < CACHE_MS) {
       return res.json(cache.payload);
@@ -92,4 +92,4 @@ module.exports = async function nflRoute(req, res) {
     if (cache.payload) return res.json(cache.payload);
     res.json({ enabled: false });
   }
-};
+}
