@@ -53,9 +53,11 @@ function mapEvent(ev) {
   return {
     id: ev.id,
     date: ev.date, // ISO 8601 UTC
-    // team display names only — NO score fields are copied over
+    // team display names + logos only — NO score fields are copied over
     home: homeC.team.displayName,
     away: awayC.team.displayName,
+    homeLogo: homeC.team.logo || null,
+    awayLogo: awayC.team.logo || null,
     venue: (comp.venue && comp.venue.fullName) || "",
     city: (comp.venue && comp.venue.address && comp.venue.address.city) || "",
     tag: isSB ? "Super Bowl" : (st ? st.tag : "Regular season"),
