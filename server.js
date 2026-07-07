@@ -7,6 +7,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3000;
 const TOKEN = process.env.FOOTBALL_DATA_TOKEN;
+const API_FOOTBALL_KEY = process.env.API_FOOTBALL_KEY;
 
 /* ------------------------------------------------------------
    FOOTBALL (football-data.org) — one route, three competitions
@@ -64,8 +65,88 @@ async function footballHandler(comp, res) {
   }
 }
 
+/* ------------------------------------------------------------
+   ICELAND — Úrvalsdeild karla, via API-Football (api-sports.io)
+   football-data.org doesn't cover Iceland at any tier, so this
+   league uses a separate provider. Same spoiler shield applies:
+   only kickoff time, team names, crests, and status leave here.
+   ------------------------------------------------------------ */
+const API_FOOTBALL_BASE = "https://v3.football.api-sports.io";
+let isLeagueId = null; // resolved once, then cached for the process lifetime
+const isCacheHolder = { time: 0, data: null };
+
+async function resolveIcelandLeagueId() {
+  if (isLeagueId) return isLeagueId;
+  const r = await fetch(
+    `${API_FOOTBALL_BASE}/leagues?country=Iceland&search=rvalsdeild`,
+    { headers: { "x-apisports-key": API_FOOTBALL_KEY } }
+  );
+  if (!r.ok) throw new Error(`leagues lookup responded ${r.status}`);
+  const raw = await r.json();
+  // Prefer the men's top flight; avoid "Women" / lower tiers.
+  const match = (raw.response || []).find(
+    (l) => /rvalsdeild/i.test(l.league?.name || "") && !/women/i.test(l.league?.name || "")
+  ) || (raw.response || [])[0];
+  if (!match) throw new Error("Could not find Úrvalsdeild in API-Football's league list");
+  isLeagueId = match.league.id;
+  return isLeagueId;
+}
+
+async function icelandHandler(res) {
+  try {
+    if (!API_FOOTBALL_KEY) {
+      return res.json({ enabled: false, reason: "No API_FOOTBALL_KEY set" });
+    }
+    if (isCacheHolder.data && Date.now() - isCacheHolder.time < CACHE_MS) {
+      return res.json(isCacheHolder.data);
+    }
+    const leagueId = await resolveIcelandLeagueId();
+    // Iceland's season runs Apr–Oct within a single calendar year.
+    // Try the current year first; fall back to last year off-season.
+    const now = new Date();
+    const seasons = now.getMonth() >= 2 ? [now.getFullYear(), now.getFullYear() - 1]
+                                          : [now.getFullYear() - 1, now.getFullYear()];
+    let matches = [];
+    for (const season of seasons) {
+      const r = await fetch(
+        `${API_FOOTBALL_BASE}/fixtures?league=${leagueId}&season=${season}`,
+        { headers: { "x-apisports-key": API_FOOTBALL_KEY } }
+      );
+      if (!r.ok) continue;
+      const raw = await r.json();
+      const fixtures = raw.response || [];
+      if (fixtures.length) {
+        matches = fixtures
+          .filter((f) => f.fixture?.status?.short !== "CANC")
+          .map((f) => {
+            const roundMatch = /(\d+)\s*$/.exec(f.league?.round || "");
+            return {
+              utcDate: f.fixture.date,
+              status: f.fixture.status?.short || null,
+              home: f.teams?.home?.name || null,
+              away: f.teams?.away?.name || null,
+              homeCrest: f.teams?.home?.logo || null,
+              awayCrest: f.teams?.away?.logo || null,
+              matchday: roundMatch ? Number(roundMatch[1]) : null,
+              stage: null,
+            };
+          });
+        break;
+      }
+    }
+    const data = { enabled: true, matches };
+    isCacheHolder.time = Date.now();
+    isCacheHolder.data = data;
+    res.json(data);
+  } catch (err) {
+    if (isCacheHolder.data) return res.json(isCacheHolder.data);
+    res.json({ enabled: false, reason: "Could not reach API-Football" });
+  }
+}
+
 app.get("/api/football/:comp", (req, res) => {
   const comp = String(req.params.comp || "").toUpperCase();
+  if (comp === "IS") return icelandHandler(res);
   if (!COMPS.has(comp)) {
     return res.status(404).json({ enabled: false, reason: "Unknown competition" });
   }
