@@ -7,7 +7,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3000;
 const TOKEN = process.env.FOOTBALL_DATA_TOKEN;
-const API_FOOTBALL_KEY = process.env.API_FOOTBALL_KEY;
 
 /* ------------------------------------------------------------
    FOOTBALL (football-data.org) — one route, three competitions
@@ -66,108 +65,102 @@ async function footballHandler(comp, res) {
 }
 
 /* ------------------------------------------------------------
-   ICELAND — Úrvalsdeild karla, via API-Football (api-sports.io)
-   football-data.org doesn't cover Iceland at any tier, so this
-   league uses a separate provider. Same spoiler shield applies:
-   only kickoff time, team names, crests, and status leave here.
+   ICELAND — Besta deildin (formerly Úrvalsdeild karla), via
+   TheSportsDB's free public API (key "3", no signup needed).
+   football-data.org doesn't cover Iceland and ESPN's API lacks
+   the league. Same spoiler shield applies: only kickoff time,
+   team names, crests, and status leave here. Scores never do.
    ------------------------------------------------------------ */
-const API_FOOTBALL_BASE = "https://v3.football.api-sports.io";
-let isLeagueId = null; // resolved once, then cached for the process lifetime
+const TSDB = "https://www.thesportsdb.com/api/v1/json/3";
+// "Icelandic Úrvalsdeild karla" (Besta deildin) — ID confirmed against
+// TheSportsDB. If it ever stops returning fixtures, the handler falls
+// back to re-resolving the ID dynamically from their Iceland league list.
+const TSDB_ICELAND_ID = "4642";
+let isLeagueId = TSDB_ICELAND_ID;
 const isCacheHolder = { time: 0, data: null };
 
-// API-Football returns HTTP 200 even on failures (bad key, plan limits,
-// rate limits) and puts the real problem in an `errors` field. Turn that
-// into a readable string, or null if the response is genuinely fine.
-function apiFootballErrors(raw) {
-  const e = raw?.errors;
-  if (!e) return null;
-  if (Array.isArray(e)) return e.length ? e.join("; ") : null;
-  const msgs = Object.entries(e).map(([k, v]) => `${k}: ${v}`);
-  return msgs.length ? msgs.join("; ") : null;
+// TheSportsDB status strings → the football-data.org-style codes the
+// frontend understands. Unknown/blank statuses map to null, which makes
+// the frontend fall back to its own kickoff-time logic — safe default.
+function tsdbStatus(ev) {
+  if ((ev.strPostponed || "").toLowerCase() === "yes") return "TIMED";
+  const s = (ev.strStatus || "").trim().toUpperCase();
+  if (!s) return null;
+  if (["MATCH FINISHED", "FT", "AET", "PEN"].includes(s)) return "FINISHED";
+  if (["NOT STARTED", "NS", "TIME TO BE DEFINED", "TBD"].includes(s)) return "TIMED";
+  if (["1H", "2H", "ET", "LIVE", "IN PROGRESS"].includes(s)) return "IN_PLAY";
+  if (["HT", "BREAK TIME", "SUSPENDED", "INTERRUPTED"].includes(s)) return "PAUSED";
+  return null;
 }
 
-// API-Football status codes → the football-data.org-style codes the
-// frontend already understands (isLive/isFinished check these).
-const AF_STATUS = {
-  NS: "TIMED", TBD: "SCHEDULED", PST: "TIMED",
-  "1H": "IN_PLAY", "2H": "IN_PLAY", ET: "IN_PLAY", P: "IN_PLAY",
-  LIVE: "IN_PLAY", BT: "PAUSED", HT: "PAUSED", SUSP: "PAUSED", INT: "PAUSED",
-  FT: "FINISHED", AET: "FINISHED", PEN: "FINISHED",
-  AWD: "FINISHED", WO: "FINISHED", ABD: "FINISHED",
-};
+// Kickoff in UTC ISO form. strTimestamp is UTC but sometimes lacks the Z.
+function tsdbKickoff(ev) {
+  if (ev.strTimestamp) {
+    return /[zZ]|[+-]\d\d:?\d\d$/.test(ev.strTimestamp)
+      ? ev.strTimestamp
+      : `${ev.strTimestamp}Z`;
+  }
+  return `${ev.dateEvent}T${ev.strTime || "00:00:00"}Z`;
+}
 
 async function resolveIcelandLeagueId() {
   if (isLeagueId) return isLeagueId;
-  // No `search` param: fetch Iceland's full (small) league list and filter
-  // locally — the remote search is another thing that can silently miss.
-  const r = await fetch(
-    `${API_FOOTBALL_BASE}/leagues?country=Iceland`,
-    { headers: { "x-apisports-key": API_FOOTBALL_KEY } }
-  );
-  if (!r.ok) throw new Error(`leagues lookup responded ${r.status}`);
+  const r = await fetch(`${TSDB}/search_all_leagues.php?c=Iceland&s=Soccer`);
+  if (!r.ok) throw new Error(`TheSportsDB league lookup responded ${r.status}`);
   const raw = await r.json();
-  const apiErr = apiFootballErrors(raw);
-  if (apiErr) throw new Error(`leagues lookup: ${apiErr}`);
-  // Prefer the men's top flight; avoid "Women" / lower tiers.
-  // /rvalsdeild/ (no leading letter) matches both "Úrvalsdeild" and "Urvalsdeild".
-  const match = (raw.response || []).find(
-    (l) => /rvalsdeild/i.test(l.league?.name || "") && !/women/i.test(l.league?.name || "")
-  );
-  if (!match) throw new Error("Could not find Úrvalsdeild in API-Football's league list");
-  isLeagueId = match.league.id;
+  // Yes, the key really is spelled "countrys" in their API.
+  const leagues = raw.countrys || raw.countries || [];
+  const match = leagues.find((l) => {
+    const name = l.strLeague || "";
+    return /besta|rvalsdeild/i.test(name) && !/women|kvenna|2\.|second/i.test(name);
+  });
+  if (!match) {
+    throw new Error("Could not find Besta deildin in TheSportsDB's Iceland list");
+  }
+  isLeagueId = match.idLeague;
   return isLeagueId;
+}
+
+async function fetchIcelandSeason(leagueId, year) {
+  const r = await fetch(`${TSDB}/eventsseason.php?id=${leagueId}&s=${year}`);
+  if (!r.ok) throw new Error(`TheSportsDB fixtures responded ${r.status}`);
+  const raw = await r.json();
+  return (raw.events || [])
+    .filter((ev) => !/cancel/i.test(ev.strStatus || ""))
+    .map((ev) => ({
+      utcDate: tsdbKickoff(ev),
+      status: tsdbStatus(ev),
+      home: ev.strHomeTeam || null,
+      away: ev.strAwayTeam || null,
+      // Badges are present on newer records; frontend handles null crests.
+      homeCrest: ev.strHomeTeamBadge || null,
+      awayCrest: ev.strAwayTeamBadge || null,
+      matchday: ev.intRound ? Number(ev.intRound) || null : null,
+      stage: null,
+    }))
+    .filter((m) => m.home && m.away);
 }
 
 async function icelandHandler(res) {
   try {
-    if (!API_FOOTBALL_KEY) {
-      return res.json({ enabled: false, reason: "No API_FOOTBALL_KEY set" });
-    }
     if (isCacheHolder.data && Date.now() - isCacheHolder.time < CACHE_MS) {
       return res.json(isCacheHolder.data);
     }
-    const leagueId = await resolveIcelandLeagueId();
-    // Iceland's season runs Apr–Oct within a single calendar year.
-    // Try the current year first; fall back to last year off-season.
-    const now = new Date();
-    const seasons = now.getMonth() >= 2 ? [now.getFullYear(), now.getFullYear() - 1]
-                                          : [now.getFullYear() - 1, now.getFullYear()];
-    let matches = [];
-    let lastApiErr = null;
-    for (const season of seasons) {
-      const r = await fetch(
-        `${API_FOOTBALL_BASE}/fixtures?league=${leagueId}&season=${season}`,
-        { headers: { "x-apisports-key": API_FOOTBALL_KEY } }
-      );
-      if (!r.ok) { lastApiErr = `fixtures responded ${r.status}`; continue; }
-      const raw = await r.json();
-      const apiErr = apiFootballErrors(raw);
-      if (apiErr) { lastApiErr = apiErr; continue; }
-      const fixtures = raw.response || [];
-      if (fixtures.length) {
-        matches = fixtures
-          .filter((f) => f.fixture?.status?.short !== "CANC")
-          .map((f) => {
-            const roundMatch = /(\d+)\s*$/.exec(f.league?.round || "");
-            const short = f.fixture?.status?.short || "NS";
-            return {
-              utcDate: f.fixture.date,
-              status: AF_STATUS[short] || "TIMED",
-              home: f.teams?.home?.name || null,
-              away: f.teams?.away?.name || null,
-              homeCrest: f.teams?.home?.logo || null,
-              awayCrest: f.teams?.away?.logo || null,
-              matchday: roundMatch ? Number(roundMatch[1]) : null,
-              stage: null,
-            };
-          });
-        break;
+    const y = new Date().getFullYear();
+    let matches = await fetchIcelandSeason(isLeagueId, y);
+    if (!matches.length) matches = await fetchIcelandSeason(isLeagueId, y - 1);
+    if (!matches.length && isLeagueId === TSDB_ICELAND_ID) {
+      // Hardcoded ID came up empty — re-resolve from the league list once.
+      isLeagueId = null;
+      const resolved = await resolveIcelandLeagueId();
+      if (resolved !== TSDB_ICELAND_ID) {
+        matches = await fetchIcelandSeason(resolved, y);
+        if (!matches.length) matches = await fetchIcelandSeason(resolved, y - 1);
       }
     }
     if (!matches.length) {
-      // Don't cache an empty result as success — report why it's empty
-      // so /api/football/IS is actually debuggable in the browser.
-      const reason = lastApiErr || "API-Football returned no fixtures for this league/season";
+      // Don't cache an empty result as success — keep it debuggable.
+      const reason = `TheSportsDB returned no fixtures for league ${isLeagueId}`;
       console.error(`[iceland] ${reason}`);
       return res.json({ enabled: false, reason });
     }
@@ -178,7 +171,7 @@ async function icelandHandler(res) {
   } catch (err) {
     console.error(`[iceland] ${err.message}`);
     if (isCacheHolder.data) return res.json(isCacheHolder.data);
-    res.json({ enabled: false, reason: err.message || "Could not reach API-Football" });
+    res.json({ enabled: false, reason: err.message || "Could not reach TheSportsDB" });
   }
 }
 
