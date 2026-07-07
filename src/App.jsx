@@ -335,6 +335,11 @@ const LEAGUES = {
     eyebrow: "UEFA Champions League 2026–27 · live schedule",
     stages: ["All","League Phase","Playoffs","R16","QF","SF","Final"],
   },
+  is: {
+    label: "Iceland", comp: "IS",
+    eyebrow: "Úrvalsdeild karla 2026 · Iceland's top flight · live schedule",
+    stages: ["All"],
+  },
 };
 
 // football-data.org stage codes → friendly Champions League labels
@@ -356,6 +361,10 @@ const LEAGUE_REPLAYS = {
   cl: [
     { name: "TNT Sports (UK)", url: "https://www.tntsports.co.uk/football/champions-league" },
     { name: "Paramount+ (US)", url: "https://www.paramountplus.com" },
+  ],
+  is: [
+    { name: "Vodafone Sport (IS)", url: "https://www.vodafone.is/sjonvarp/sport/" },
+    { name: "RÚV dagskrá (IS)", url: "https://www.ruv.is/sjonvarp/dagskra/ruv" },
   ],
 };
 
@@ -520,6 +529,7 @@ export default function App() {
     wc: { enabled: false, matches: [] },
     pl: { enabled: false, matches: [] },
     cl: { enabled: false, matches: [] },
+    is: { enabled: false, matches: [] },
   });
   const [nflApi, setNflApi] = useState({ enabled: false, events: [] });
 
@@ -592,8 +602,8 @@ export default function App() {
           const stageLbl = league === "cl"
             ? (CL_STAGE[m.stage] || "League Phase")
             : "Regular season";
-          const tag = league === "pl"
-            ? (m.matchday ? `Matchday ${m.matchday}` : "Premier League")
+          const tag = (league === "pl" || league === "is")
+            ? (m.matchday ? `Matchday ${m.matchday}` : leagueCfg.label)
             : (stageLbl === "League Phase" && m.matchday ? `League Phase · MD${m.matchday}` : stageLbl);
           return {
             t: m.utcDate,
