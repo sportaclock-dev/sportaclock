@@ -75,18 +75,44 @@ const API_FOOTBALL_BASE = "https://v3.football.api-sports.io";
 let isLeagueId = null; // resolved once, then cached for the process lifetime
 const isCacheHolder = { time: 0, data: null };
 
+// API-Football returns HTTP 200 even on failures (bad key, plan limits,
+// rate limits) and puts the real problem in an `errors` field. Turn that
+// into a readable string, or null if the response is genuinely fine.
+function apiFootballErrors(raw) {
+  const e = raw?.errors;
+  if (!e) return null;
+  if (Array.isArray(e)) return e.length ? e.join("; ") : null;
+  const msgs = Object.entries(e).map(([k, v]) => `${k}: ${v}`);
+  return msgs.length ? msgs.join("; ") : null;
+}
+
+// API-Football status codes → the football-data.org-style codes the
+// frontend already understands (isLive/isFinished check these).
+const AF_STATUS = {
+  NS: "TIMED", TBD: "SCHEDULED", PST: "TIMED",
+  "1H": "IN_PLAY", "2H": "IN_PLAY", ET: "IN_PLAY", P: "IN_PLAY",
+  LIVE: "IN_PLAY", BT: "PAUSED", HT: "PAUSED", SUSP: "PAUSED", INT: "PAUSED",
+  FT: "FINISHED", AET: "FINISHED", PEN: "FINISHED",
+  AWD: "FINISHED", WO: "FINISHED", ABD: "FINISHED",
+};
+
 async function resolveIcelandLeagueId() {
   if (isLeagueId) return isLeagueId;
+  // No `search` param: fetch Iceland's full (small) league list and filter
+  // locally — the remote search is another thing that can silently miss.
   const r = await fetch(
-    `${API_FOOTBALL_BASE}/leagues?country=Iceland&search=rvalsdeild`,
+    `${API_FOOTBALL_BASE}/leagues?country=Iceland`,
     { headers: { "x-apisports-key": API_FOOTBALL_KEY } }
   );
   if (!r.ok) throw new Error(`leagues lookup responded ${r.status}`);
   const raw = await r.json();
+  const apiErr = apiFootballErrors(raw);
+  if (apiErr) throw new Error(`leagues lookup: ${apiErr}`);
   // Prefer the men's top flight; avoid "Women" / lower tiers.
+  // /rvalsdeild/ (no leading letter) matches both "Úrvalsdeild" and "Urvalsdeild".
   const match = (raw.response || []).find(
     (l) => /rvalsdeild/i.test(l.league?.name || "") && !/women/i.test(l.league?.name || "")
-  ) || (raw.response || [])[0];
+  );
   if (!match) throw new Error("Could not find Úrvalsdeild in API-Football's league list");
   isLeagueId = match.league.id;
   return isLeagueId;
@@ -107,22 +133,26 @@ async function icelandHandler(res) {
     const seasons = now.getMonth() >= 2 ? [now.getFullYear(), now.getFullYear() - 1]
                                           : [now.getFullYear() - 1, now.getFullYear()];
     let matches = [];
+    let lastApiErr = null;
     for (const season of seasons) {
       const r = await fetch(
         `${API_FOOTBALL_BASE}/fixtures?league=${leagueId}&season=${season}`,
         { headers: { "x-apisports-key": API_FOOTBALL_KEY } }
       );
-      if (!r.ok) continue;
+      if (!r.ok) { lastApiErr = `fixtures responded ${r.status}`; continue; }
       const raw = await r.json();
+      const apiErr = apiFootballErrors(raw);
+      if (apiErr) { lastApiErr = apiErr; continue; }
       const fixtures = raw.response || [];
       if (fixtures.length) {
         matches = fixtures
           .filter((f) => f.fixture?.status?.short !== "CANC")
           .map((f) => {
             const roundMatch = /(\d+)\s*$/.exec(f.league?.round || "");
+            const short = f.fixture?.status?.short || "NS";
             return {
               utcDate: f.fixture.date,
-              status: f.fixture.status?.short || null,
+              status: AF_STATUS[short] || "TIMED",
               home: f.teams?.home?.name || null,
               away: f.teams?.away?.name || null,
               homeCrest: f.teams?.home?.logo || null,
@@ -134,13 +164,21 @@ async function icelandHandler(res) {
         break;
       }
     }
+    if (!matches.length) {
+      // Don't cache an empty result as success — report why it's empty
+      // so /api/football/IS is actually debuggable in the browser.
+      const reason = lastApiErr || "API-Football returned no fixtures for this league/season";
+      console.error(`[iceland] ${reason}`);
+      return res.json({ enabled: false, reason });
+    }
     const data = { enabled: true, matches };
     isCacheHolder.time = Date.now();
     isCacheHolder.data = data;
     res.json(data);
   } catch (err) {
+    console.error(`[iceland] ${err.message}`);
     if (isCacheHolder.data) return res.json(isCacheHolder.data);
-    res.json({ enabled: false, reason: "Could not reach API-Football" });
+    res.json({ enabled: false, reason: err.message || "Could not reach API-Football" });
   }
 }
 
