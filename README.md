@@ -9,8 +9,8 @@ timezone, plus a spoiler-free catch-up zone for the ones you slept through.
 
 | Sport | Competitions | Source |
 | --- | --- | --- |
-| ⚽ Football | Besta deildin (Iceland) | TheSportsDB |
 | ⚽ Football | Premier League, Champions League | football-data.org |
+| ⚽ Football | Besta deildin (Iceland) | TheSportsDB |
 | 🏎 Formula 1 | All 22 rounds, every session | Built-in 2026 FIA calendar |
 | 🏈 NFL | Full 272-game season + playoffs | ESPN (public endpoint) |
 
@@ -92,6 +92,32 @@ Without a token the football routes return `{ enabled: false }` and those two
 leagues show an empty state. Iceland, F1 and NFL need no credentials.
 
 Deployed on Railway via `railway.json` (Nixpacks, `npm start`).
+
+## Owner's preferences
+
+Two things are set deliberately rather than generically, at the top of
+`src/App.jsx`:
+
+```js
+const THEME = "sline";                 // "sline" | "classic"
+const PINNED_TEAM = { pl: "Liverpool", cl: "Liverpool", nfl: "Eagles" };
+```
+
+`PINNED_TEAM` holds a club at the front of the crest filter bar and marks it
+with the accent colour; everyone else sorts alphabetically. Matching is by
+substring, so `"Liverpool"` catches `"Liverpool FC"` and `"Eagles"` catches
+`"Philadelphia Eagles"`.
+
+`THEME` picks the palette. Both are defined as full sets of the same 15 colour
+roles, so switching is one word:
+
+- **`sline`** — graphite and aluminium with a single red mark, after the way
+  Audi badges an S line. Kickoff times read aluminium, countdowns read white,
+  red appears only in small doses: the badge rule, active-tab underlines,
+  countdown separators, and the rail on night-owl rows.
+- **`classic`** — the original navy, green and amber.
+
+Competition order in the football tab follows the `LEAGUES` object's key order.
 
 ## Timezones
 
