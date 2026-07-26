@@ -16,6 +16,15 @@ import React, {
    All start times are stored in UTC and converted in the browser.
    ============================================================ */
 
+/* ------------------------------------------------------------
+   PALETTE
+   "sline" — graphite and aluminium with the red used only as a
+   small mark, the way Audi badges an S line: monochrome body,
+   one sharp accent. "classic" is the original navy / green /
+   amber, kept intact. Change this one word to switch.
+   ------------------------------------------------------------ */
+const THEME = "sline"; // "sline" | "classic"
+
 /* ---------- FORMULA 1 2026 — every session of every round ---------- */
 const F1_STAGE = {
   "Practice 1": "Practice", "Practice 2": "Practice", "Practice 3": "Practice",
@@ -170,22 +179,26 @@ const STATIC_EVENTS = { f1: F1_RACES, nfl: NFL_EVENTS };
 
 /* ---------- FOOTBALL LEAGUES (inside the ⚽ tab) ---------- */
 const LEAGUES = {
-  is: {
-    label: "Iceland", comp: "IS",
-    eyebrow: "Besta deildin 2026 · Iceland's top flight · live schedule",
-    stages: ["All"],
-  },
   pl: {
     label: "Premier League", comp: "PL",
-    eyebrow: "Premier League 2026–27 · every match, live schedule",
+    eyebrow: "Premier League 2026\u201327 \u00b7 every match, live schedule",
     stages: ["All"],
   },
   cl: {
     label: "Champions League", comp: "CL",
-    eyebrow: "UEFA Champions League 2026–27 · live schedule",
+    eyebrow: "UEFA Champions League 2026\u201327 \u00b7 live schedule",
     stages: ["All", "League Phase", "Playoffs", "R16", "QF", "SF", "Final"],
   },
+  is: {
+    label: "Iceland", comp: "IS",
+    eyebrow: "Besta deildin 2026 \u00b7 Iceland's top flight \u00b7 live schedule",
+    stages: ["All"],
+  },
 };
+
+/* The owner's teams sit first in the crest bar; everyone else alphabetical.
+   Matched as a substring, so "Liverpool FC" and "Philadelphia Eagles" both hit. */
+const PINNED_TEAM = { pl: "Liverpool", cl: "Liverpool", nfl: "Eagles" };
 
 // football-data.org stage codes → friendly Champions League labels
 const CL_STAGE = {
@@ -366,6 +379,21 @@ function HeroClock({ to }) {
   );
 }
 
+// How long a live event has been running. Minutes only, so it rides the
+// 30-second clock. This is wall-clock time since the start — deliberately not
+// dressed up as a match minute, which stoppages and half-time would break.
+function Elapsed({ from }) {
+  const now = useTick("slow");
+  const ms = Math.max(0, now - from);
+  const { d, h, m } = parts(ms);
+  if (d > 0) return null; // a stale "live" status; the number would be nonsense
+  return (
+    <span className="elapsed">
+      started {h > 0 ? `${h}h ${pad(m)}m` : `${m} min`} ago
+    </span>
+  );
+}
+
 function StagePill({ ev }) {
   if (!ev.tag) return null;
   return <span className="pill">{ev.tag}</span>;
@@ -486,7 +514,7 @@ function buildEvents(sport, league, football, nflApi) {
 
 // Every competition the auto-jump considers, in tie-break order.
 const ALL_VIEWS = [
-  ["football", "is"], ["football", "pl"], ["football", "cl"],
+  ["football", "pl"], ["football", "cl"], ["football", "is"],
   ["f1", null], ["nfl", null],
 ];
 
@@ -494,7 +522,7 @@ const ALL_VIEWS = [
 
 export default function App() {
   const [sport, setSport] = useState("football");
-  const [league, setLeague] = useState("is");
+  const [league, setLeague] = useState("pl");
   const [tab, setTab] = useState("upcoming");
   const [query, setQuery] = useState("");
   const [stage, setStage] = useState("All");
@@ -503,9 +531,9 @@ export default function App() {
   const [jumped, setJumped] = useState(null);
 
   const [football, setFootball] = useState({
-    is: { enabled: false, matches: [] },
     pl: { enabled: false, matches: [] },
     cl: { enabled: false, matches: [] },
+    is: { enabled: false, matches: [] },
   });
   const [nflApi, setNflApi] = useState({ enabled: false, events: [] });
   const [loaded, setLoaded] = useState({ football: false, nfl: false });
@@ -665,10 +693,18 @@ export default function App() {
       if (ev.away && ev.awayCrest && !map.has(ev.away)) map.set(ev.away, ev.awayCrest);
     }
     if (map.size < 2 || map.size > 40) return [];
-    return [...map.entries()]
+    const teams = [...map.entries()]
       .map(([name, crest]) => ({ name, crest }))
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [events]);
+
+    const pin = sport === "football" ? PINNED_TEAM[league] : PINNED_TEAM[sport];
+    if (pin) {
+      const i = teams.findIndex((t) => t.name.includes(pin));
+      if (i > 0) teams.unshift(...teams.splice(i, 1));
+      if (i >= 0) teams[0].mine = true;
+    }
+    return teams;
+  }, [events, sport, league]);
 
   const replays = sport === "football"
     ? (LEAGUE_REPLAYS[league] || [])
@@ -692,13 +728,13 @@ export default function App() {
     : sport === "nfl" ? nflApi.enabled : false;
 
   return (
-    <div className="page">
+    <div className={`page theme-${THEME}`}>
       <Styles />
       <div className="wrap">
 
         {/* ---------- header ---------- */}
         <header className="head">
-          <p className="eyebrow">{eyebrow}</p>
+          <p className="eyebrow"><span className="mark" aria-hidden="true" />{eyebrow}</p>
           <h1 className="logo">SPORTACLOCK</h1>
           <p className="tagline">
             <span>Ready.</span> <span className="t-tick">Tick.</span> <span className="t-kick">Kick.</span>
@@ -778,8 +814,15 @@ export default function App() {
         {buckets.live.length > 0 && (
           <section className="livewrap" aria-label="Live now">
             {buckets.live.map((ev) => (
-              <div key={ev.id} className="liverow">
-                <div>
+              <article key={ev.id} className="row row--live">
+                <div className="row-time">
+                  <time dateTime={ev.t} className="row-hhmm">{fmtTime(ev.kickoff)}</time>
+                  <span className="row-dow">started</span>
+                </div>
+                <div className="row-main">
+                  <div className="row-meta">
+                    <StagePill ev={ev} />
+                  </div>
                   <EventName ev={ev} />
                   {(ev.venue || ev.city) && (
                     <div className="row-where">
@@ -787,8 +830,11 @@ export default function App() {
                     </div>
                   )}
                 </div>
-                <span className="livetag">● Live</span>
-              </div>
+                <div className="row-clock">
+                  <span className="livetag">● Live</span>
+                  <Elapsed from={ev.kickoff} />
+                </div>
+              </article>
             ))}
           </section>
         )}
@@ -844,9 +890,9 @@ export default function App() {
                 return (
                   <button
                     key={t.name}
-                    className={`crest${on ? " is-on" : ""}${teamFilter && !on ? " is-off" : ""}`}
+                    className={`crest${t.mine ? " crest--mine" : ""}${on ? " is-on" : ""}${teamFilter && !on ? " is-off" : ""}`}
                     aria-pressed={on}
-                    title={t.name}
+                    title={t.mine ? `${t.name} — your club` : t.name}
                     onClick={() => setTeamFilter(on ? null : t.name)}
                   >
                     <img src={t.crest} alt={t.name} loading="lazy" width="26" height="26" />
@@ -971,8 +1017,8 @@ export default function App() {
             device's timezone automatically.
           </p>
           <p>
-            <strong>Football:</strong> Besta deildin fixtures come from TheSportsDB;
-            Premier League and Champions League from football-data.org. Scores are stripped
+            <strong>Football:</strong> Premier League and Champions League fixtures come from
+            football-data.org, Besta deildin from TheSportsDB. Scores are stripped
             server-side and schedules refresh every 15 minutes, so rescheduled games stay
             current. Postponed fixtures stay listed with a badge rather than vanishing.
           </p>
@@ -994,17 +1040,41 @@ export default function App() {
 
 /* ============================================================
    STYLES
-   Real stylesheet rather than inline objects: no style objects
-   rebuilt on every render, and hover/focus/media queries work.
+   A real stylesheet rather than inline objects: no style objects
+   rebuilt on every render, and hover / focus / media queries work.
+
+   Colour roles, so a theme swap touches nothing but the two
+   blocks at the top:
+     --accent   the mark. Used sparingly and never for large areas.
+     --metal    fixed instrument readings — the kickoff times.
+     --clock    the numbers that move — the countdowns.
+     --live     in progress, and only that.
    ============================================================ */
 function Styles() {
   return (
     <style>{`
-:root {
+/* graphite body, aluminium readouts, one red mark */
+.theme-sline {
+  --bg:#0C0D10; --panel:#14161A; --panel-2:#0F1114;
+  --line:#23262C; --line-2:#33373F;
+  --text:#F2F3F5; --muted:#A0A6AF; --dim:#767D87; --faint:#464C55;
+  --accent:#E10A24; --accent-soft:#F08A96; --accent-wash:rgba(225,10,36,0.08);
+  --accent-glow:rgba(225,10,36,0.10);
+  --metal:#C9CED6; --clock:#F2F3F5; --live:#FF3B4A;
+  --on-accent:#FFFFFF;
+}
+/* the original navy, green and amber */
+.theme-classic {
   --bg:#0B1220; --panel:#121C2E; --panel-2:#0E1626;
   --line:#1E2B42; --line-2:#2A3A57;
   --text:#E8EDF4; --muted:#9FB0C6; --dim:#7C8BA1; --faint:#3A4A63;
-  --green:#2F9E68; --green-soft:#8FB89F; --amber:#FFD166; --red:#E25C5C;
+  --accent:#2F9E68; --accent-soft:#8FB89F; --accent-wash:rgba(47,158,104,0.10);
+  --accent-glow:rgba(255,209,102,0.10);
+  --metal:#E8EDF4; --clock:#FFD166; --live:#E25C5C;
+  --on-accent:#0B1220;
+}
+
+:root {
   --mono:'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
   --sans:'Archivo', system-ui, -apple-system, sans-serif;
 }
@@ -1012,144 +1082,145 @@ function Styles() {
 .page {
   min-height:100vh; background:var(--bg); color:var(--text);
   font-family:var(--sans);
-  background-image:radial-gradient(ellipse 80% 40% at 50% -5%, rgba(255,209,102,0.10), transparent 70%);
+  background-image:radial-gradient(ellipse 70% 38% at 50% -6%, var(--accent-glow), transparent 72%);
 }
 .wrap { max-width:880px; margin:0 auto; padding:0 16px 80px }
 p { margin:0 }
 button { font-family:inherit; cursor:pointer }
-:focus-visible { outline:2px solid var(--amber); outline-offset:2px; border-radius:4px }
+:focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:4px }
 
 /* ---------- header ---------- */
-.head { padding:34px 0 18px; border-bottom:2px solid var(--green) }
+.head { padding:34px 0 18px; border-bottom:1px solid var(--line-2) }
 .eyebrow {
-  font-size:0.68rem; letter-spacing:0.28em; text-transform:uppercase;
-  color:var(--green); font-weight:700;
+  display:flex; align-items:center;
+  font-size:0.68rem; letter-spacing:0.26em; text-transform:uppercase;
+  color:var(--muted); font-weight:700;
+}
+/* the badge: the one place the accent appears at full strength up top */
+.mark {
+  flex:none; width:20px; height:3px; background:var(--accent);
+  margin-right:10px; border-radius:1px;
 }
 .logo {
-  font-weight:900; font-size:clamp(1.9rem,7vw,3rem); margin:6px 0 4px;
-  letter-spacing:-0.02em;
+  font-weight:900; font-size:clamp(1.9rem,7vw,3rem); margin:10px 0 4px;
+  letter-spacing:-0.025em;
 }
-.tagline { font-weight:700; font-size:1rem; letter-spacing:0.06em; margin-bottom:6px }
-.t-tick { color:var(--amber); font-family:var(--mono) }
-.t-kick { color:var(--green) }
-.lede { color:var(--dim); font-size:0.85rem; max-width:52ch; line-height:1.5 }
-.tzline { color:var(--faint); font-size:0.72rem; margin-top:6px }
-.feed { color:var(--green) }
+.tagline { font-weight:700; font-size:1rem; letter-spacing:0.06em; margin-bottom:8px }
+.t-tick { color:var(--accent); font-family:var(--mono) }
+.t-kick { color:var(--metal) }
+.lede { color:var(--dim); font-size:0.85rem; max-width:52ch; line-height:1.55 }
+.tzline { color:var(--faint); font-size:0.72rem; margin-top:8px }
+.feed { color:var(--accent-soft) }
 
 /* ---------- sticky nav ---------- */
 .nav {
   position:sticky; top:0; z-index:20;
-  padding:12px 0 10px; margin-bottom:2px;
-  background:rgba(11,18,32,0.94);
-  backdrop-filter:blur(10px);
-  border-bottom:1px solid var(--line);
+  padding:12px 0 10px; background:color-mix(in srgb, var(--bg) 94%, transparent);
+  backdrop-filter:blur(10px); border-bottom:1px solid var(--line);
+}
+@supports not (background:color-mix(in srgb, red 50%, transparent)) {
+  .nav { background:var(--bg) }
 }
 .sports { display:flex; gap:8px }
 .sport {
-  flex:1; padding:10px 6px; border-radius:8px; white-space:nowrap;
+  flex:1; padding:11px 6px; border-radius:7px; white-space:nowrap;
   background:transparent; border:1px solid var(--line); color:var(--dim);
-  font-weight:700; font-size:0.82rem; letter-spacing:0.03em;
-  transition:border-color .15s, color .15s, background .15s;
+  font-weight:700; font-size:0.82rem; letter-spacing:0.04em;
+  transition:border-color .16s, color .16s, background .16s;
 }
 .sport:hover { color:var(--text); border-color:var(--line-2) }
-.sport.is-on { background:rgba(255,209,102,0.10); border-color:var(--amber); color:var(--amber) }
-
+.sport.is-on {
+  background:var(--panel); border-color:var(--line-2); color:var(--text);
+  box-shadow:inset 0 -2px 0 var(--accent);
+}
 .chips { display:flex; gap:6px; overflow-x:auto; padding-bottom:2px; scrollbar-width:none }
 .chips::-webkit-scrollbar { display:none }
 .nav .chips { margin-top:8px }
 .chip {
-  padding:5px 11px; border-radius:20px; font-size:0.72rem; font-weight:600;
+  padding:5px 12px; border-radius:20px; font-size:0.72rem; font-weight:600;
   white-space:nowrap; background:transparent;
-  border:1px solid var(--line); color:var(--dim); transition:border-color .15s, color .15s;
+  border:1px solid var(--line); color:var(--dim);
+  transition:border-color .16s, color .16s, background .16s;
 }
 .chip:hover { color:var(--text) }
-.chip.is-on { background:rgba(255,209,102,0.12); border-color:var(--amber); color:var(--amber) }
+.chip.is-on { background:var(--accent-wash); border-color:var(--accent); color:var(--text) }
 
 .jumped {
   margin-top:12px; font-size:0.74rem; color:var(--dim);
-  border-left:2px solid var(--green); padding-left:10px;
+  border-left:2px solid var(--accent); padding-left:10px;
 }
-.jumped strong { color:var(--green-soft); font-weight:600 }
+.jumped strong { color:var(--text); font-weight:600 }
 
 /* ---------- hero ---------- */
 .hero {
-  margin-top:16px; padding:24px 18px 20px; text-align:center;
+  margin-top:16px; padding:26px 18px 22px; text-align:center;
   background:var(--panel); border:1px solid var(--line-2); border-radius:12px;
 }
 .hero-eyebrow {
-  font-size:0.65rem; letter-spacing:0.25em; text-transform:uppercase;
-  color:var(--dim); margin-bottom:10px;
+  font-size:0.65rem; letter-spacing:0.24em; text-transform:uppercase;
+  color:var(--dim); margin-bottom:12px;
 }
-.hero-name { margin:0 0 6px }
-.hero-ev { font-weight:700; font-size:clamp(1.2rem,5vw,1.7rem) }
+.hero-name { margin:0 0 8px }
+.hero-ev { font-weight:700; font-size:clamp(1.2rem,5vw,1.75rem) }
 .hero-meta {
   display:flex; gap:10px; align-items:center; justify-content:center;
   flex-wrap:wrap; color:var(--muted); font-size:0.85rem;
 }
-/* the signature: kickoff time as a departure-board readout */
+/* the signature: kickoff time as an instrument readout */
 .hero-when {
   display:inline-flex; align-items:baseline; gap:12px; flex-wrap:wrap;
-  justify-content:center; margin:16px 0 4px; padding:10px 18px;
+  justify-content:center; margin:18px 0 4px; padding:11px 20px;
   background:var(--panel-2); border:1px solid var(--line);
-  border-left:3px solid var(--green); border-radius:8px;
+  border-left:3px solid var(--accent); border-radius:7px;
 }
 .hero-hhmm {
   font-family:var(--mono); font-weight:600; font-variant-numeric:tabular-nums;
-  font-size:clamp(1.8rem,7vw,2.5rem); line-height:1; letter-spacing:0.01em;
-  color:var(--text);
+  font-size:clamp(1.85rem,7vw,2.55rem); line-height:1; letter-spacing:0.01em;
+  color:var(--metal);
 }
 .hero-date { color:var(--muted); font-size:0.85rem; font-weight:600 }
-.hero-clock { display:flex; gap:14px; align-items:flex-end; justify-content:center; margin-top:14px }
+.hero-clock { display:flex; gap:14px; align-items:flex-end; justify-content:center; margin-top:16px }
 .hero-cell { text-align:center }
 .hero-num {
   font-family:var(--mono); font-variant-numeric:tabular-nums; font-weight:600;
-  font-size:clamp(2.1rem,8.5vw,3.9rem); line-height:1; color:var(--amber);
+  font-size:clamp(2.1rem,8.5vw,3.9rem); line-height:1; color:var(--clock);
   letter-spacing:0.02em;
 }
 .hero-unit {
   font-size:0.6rem; letter-spacing:0.15em; color:var(--dim);
-  text-transform:uppercase; margin-top:6px;
+  text-transform:uppercase; margin-top:7px;
 }
 .hero-colon {
-  color:var(--faint); font-weight:600; font-family:var(--mono);
+  color:var(--accent); font-weight:600; font-family:var(--mono);
   font-size:clamp(1.5rem,6vw,2.8rem); padding-bottom:20px;
   animation:blink 1s steps(1) infinite;
 }
-.hero-sub { color:var(--green-soft); font-size:0.82rem; margin-top:12px }
-
-/* ---------- live ---------- */
-.livewrap { margin-top:16px; display:flex; flex-direction:column; gap:8px }
-.liverow {
-  display:flex; justify-content:space-between; align-items:center; gap:10px;
-  padding:14px 16px; background:var(--panel);
-  border:1px solid var(--red); border-radius:10px;
-}
-.livetag {
-  color:var(--red); font-weight:900; font-size:0.72rem; letter-spacing:0.18em;
-  white-space:nowrap; animation:pulse 1.4s infinite;
-}
+.hero-sub { color:var(--accent-soft); font-size:0.82rem; margin-top:14px }
 
 /* ---------- tabs ---------- */
 .tabs { display:flex; gap:8px; margin:18px 0 14px }
 .tab {
-  flex:1; padding:12px 8px; border-radius:8px;
+  flex:1; padding:12px 8px; border-radius:7px;
   background:transparent; border:1px solid var(--line); color:var(--dim);
   font-weight:700; font-size:0.85rem; letter-spacing:0.03em;
-  transition:border-color .15s, color .15s, background .15s;
+  transition:border-color .16s, color .16s, background .16s;
 }
 .tab:hover { color:var(--text) }
-.tab.is-on { background:var(--panel); border-color:var(--green); color:var(--text) }
+.tab.is-on {
+  background:var(--panel); border-color:var(--line-2); color:var(--text);
+  box-shadow:inset 0 -2px 0 var(--accent);
+}
 .count {
-  display:inline-block; margin-left:5px; padding:1px 6px; border-radius:10px;
+  display:inline-block; margin-left:6px; padding:1px 7px; border-radius:10px;
   background:var(--line); color:var(--muted); font-size:0.72rem;
   font-family:var(--mono); font-variant-numeric:tabular-nums;
 }
-.tab.is-on .count { background:rgba(47,158,104,0.22); color:var(--green-soft) }
+.tab.is-on .count { background:var(--accent-wash); color:var(--text) }
 
 /* ---------- filters ---------- */
 .filters { display:flex; flex-direction:column; gap:10px; margin-bottom:18px }
 .search {
-  width:100%; padding:10px 12px; border-radius:8px;
+  width:100%; padding:10px 12px; border-radius:7px;
   background:var(--panel-2); border:1px solid var(--line); color:var(--text);
   font-family:inherit; font-size:0.9rem; outline:none;
 }
@@ -1157,17 +1228,19 @@ button { font-family:inherit; cursor:pointer }
 .search:focus { border-color:var(--line-2) }
 .crests { display:flex; flex-wrap:wrap; gap:6px }
 .crest {
-  padding:5px; border-radius:8px; line-height:0;
+  padding:5px; border-radius:7px; line-height:0;
   background:transparent; border:1px solid var(--line);
-  transition:border-color .15s, opacity .15s;
+  transition:border-color .16s, opacity .16s;
 }
 .crest img { width:26px; height:26px; object-fit:contain; display:block }
 .crest:hover { border-color:var(--line-2) }
-.crest.is-on { background:rgba(255,209,102,0.12); border-color:var(--amber) }
-.crest.is-off { opacity:0.45 }
+/* your club, held at the front of the bar */
+.crest--mine { border-bottom:2px solid var(--accent) }
+.crest.is-on { background:var(--accent-wash); border-color:var(--accent) }
+.crest.is-off { opacity:0.4 }
 .filternote { font-size:0.74rem; color:var(--dim) }
 .link {
-  background:none; border:none; padding:0; color:var(--amber);
+  background:none; border:none; padding:0; color:var(--accent-soft);
   font-size:inherit; font-weight:600; text-decoration:underline;
 }
 
@@ -1175,113 +1248,129 @@ button { font-family:inherit; cursor:pointer }
 .day { margin-bottom:22px }
 .dayhead {
   font-size:0.7rem; letter-spacing:0.2em; text-transform:uppercase;
-  color:var(--green); font-weight:700; margin:0 0 8px;
+  color:var(--muted); font-weight:700; margin:0 0 8px;
   border-bottom:1px solid var(--line); padding-bottom:6px;
 }
-.dayhead--off { color:var(--red) }
+.dayhead--off { color:var(--dim) }
 
 /* ---------- the departure-board row ---------- */
 .row {
   display:grid; grid-template-columns:78px 1fr auto;
   gap:16px; align-items:center;
-  padding:12px 16px 12px 13px; margin-bottom:8px;
+  padding:13px 16px 13px 13px; margin-bottom:8px;
   background:var(--panel); border:1px solid var(--line);
-  border-left:3px solid var(--line-2); border-radius:10px;
-  transition:border-color .15s, background .15s;
+  border-left:3px solid transparent; border-radius:9px;
+  transition:border-color .16s, background .16s;
 }
-.row:hover { background:#142034; border-color:var(--line-2) }
-.row--owl { border-left-color:var(--amber) }
-.row--off { opacity:0.72 }
-.row--done { border-left-color:var(--green) }
+.row:hover {
+  border-color:var(--line-2);
+  background:var(--panel-2);
+  background:color-mix(in srgb, var(--panel) 88%, var(--text));
+}
+.row--owl { border-left-color:var(--accent) }
+.row--off { opacity:0.66 }
+.row--live { border-color:var(--live); border-left-color:var(--live) }
+.row--done { border-left-color:var(--line-2) }
 
 .row-time { text-align:left }
 .row-hhmm {
   display:block; font-family:var(--mono); font-weight:600;
   font-variant-numeric:tabular-nums; font-size:1.5rem; line-height:1.05;
-  letter-spacing:0.01em; color:var(--text);
+  letter-spacing:0.01em; color:var(--metal);
 }
 .row-hhmm--tbd { color:var(--faint) }
 .row-dow {
   display:block; font-size:0.6rem; letter-spacing:0.16em; text-transform:uppercase;
-  color:var(--dim); margin-top:3px;
+  color:var(--dim); margin-top:4px;
 }
 .row-main { min-width:0 }
 .row-meta { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:4px }
 .row-where { color:var(--muted); font-size:0.82rem; margin-top:3px }
-.row-sub { color:var(--green-soft); font-size:0.8rem; margin-top:2px }
+.row-sub { color:var(--accent-soft); font-size:0.8rem; margin-top:3px }
 .ev-name { font-weight:700; font-size:0.98rem }
 .ev-vs { color:var(--faint); font-weight:500 }
 
-.row-clock { display:flex; flex-direction:column; align-items:flex-end; flex-shrink:0 }
+.row-clock { display:flex; flex-direction:column; align-items:flex-end; flex-shrink:0; gap:3px }
 .cd {
   font-family:var(--mono); font-variant-numeric:tabular-nums; font-weight:600;
-  font-size:1rem; color:var(--amber); white-space:nowrap;
+  font-size:1rem; color:var(--clock); white-space:nowrap;
 }
-.cd i { color:var(--faint); font-style:normal; font-weight:500 }
+.cd i { color:var(--accent); font-style:normal; font-weight:500 }
 .row-clock-label {
   font-size:0.58rem; letter-spacing:0.12em; text-transform:uppercase;
-  color:var(--faint); margin-top:3px;
+  color:var(--faint);
 }
 .off-badge {
   font-size:0.62rem; letter-spacing:0.12em; text-transform:uppercase;
-  font-weight:700; color:var(--red); border:1px solid var(--red);
+  font-weight:700; color:var(--muted); border:1px solid var(--line-2);
   border-radius:4px; padding:3px 8px; white-space:nowrap;
 }
 
 .pill {
   font-size:0.62rem; letter-spacing:0.13em; text-transform:uppercase;
-  color:var(--green-soft); border:1px solid #24513A; border-radius:3px;
+  color:var(--muted); border:1px solid var(--line-2); border-radius:3px;
   padding:2px 7px; white-space:nowrap;
 }
-.owl { font-size:0.62rem; letter-spacing:0.1em; color:var(--amber); text-transform:uppercase }
+.owl { font-size:0.62rem; letter-spacing:0.1em; color:var(--accent); text-transform:uppercase }
 .done { font-size:0.62rem; letter-spacing:0.1em; color:var(--dim); text-transform:uppercase }
+
+/* ---------- live ---------- */
+.livewrap { margin-top:16px }
+.livetag {
+  color:var(--live); font-weight:900; font-size:0.72rem; letter-spacing:0.18em;
+  white-space:nowrap; animation:pulse 1.6s infinite;
+}
+.elapsed {
+  font-family:var(--mono); font-size:0.72rem; color:var(--muted);
+  font-variant-numeric:tabular-nums; white-space:nowrap;
+}
 
 /* ---------- catch up ---------- */
 .shield {
-  padding:14px 16px; margin-bottom:16px; border-radius:10px;
-  background:rgba(47,158,104,0.06); border:1px solid #24513A;
+  padding:15px 16px; margin-bottom:16px; border-radius:9px;
+  background:var(--panel); border:1px solid var(--line);
+  border-left:3px solid var(--accent);
 }
-.shield-title { font-weight:700; font-size:0.85rem; margin-bottom:4px }
-.shield-body { color:var(--muted); font-size:0.78rem; line-height:1.55; max-width:64ch }
+.shield-title { font-weight:700; font-size:0.85rem; margin-bottom:5px }
+.shield-body { color:var(--muted); font-size:0.78rem; line-height:1.6; max-width:64ch }
 .toggle {
   display:flex; gap:8px; align-items:flex-start; margin-top:12px;
-  font-size:0.74rem; color:var(--dim); cursor:pointer; line-height:1.4;
+  font-size:0.74rem; color:var(--dim); cursor:pointer; line-height:1.45;
 }
-.toggle input { margin-top:2px; accent-color:var(--amber) }
+.toggle input { margin-top:2px; accent-color:var(--accent) }
 .replays { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px }
 .replay {
   font-size:0.74rem; font-weight:700; text-decoration:none; border-radius:5px;
-  padding:7px 12px; color:#0B1220; background:var(--amber);
-  border:1px solid var(--amber);
+  padding:7px 12px; color:var(--on-accent); background:var(--accent);
+  border:1px solid var(--accent);
 }
-.replay:hover { filter:brightness(1.08) }
-.replay--warn { color:var(--text); background:transparent; border-color:var(--faint) }
+.replay:hover { filter:brightness(1.12) }
+.replay--warn { color:var(--muted); background:transparent; border-color:var(--line-2) }
 
 .empty {
-  padding:18px 16px; text-align:center; color:var(--dim); font-size:0.86rem;
-  line-height:1.5; background:var(--panel); border:1px solid var(--line);
-  border-radius:10px;
+  padding:20px 16px; text-align:center; color:var(--dim); font-size:0.86rem;
+  line-height:1.55; background:var(--panel); border:1px solid var(--line);
+  border-radius:9px;
 }
 
 /* ---------- footer ---------- */
 .foot {
-  margin-top:40px; padding-top:16px; border-top:1px solid var(--line);
-  color:var(--faint); font-size:0.68rem; line-height:1.65;
+  margin-top:44px; padding-top:16px; border-top:1px solid var(--line);
+  color:var(--faint); font-size:0.68rem; line-height:1.7;
   display:flex; flex-direction:column; gap:8px;
 }
 .foot strong { color:var(--dim) }
 
-@keyframes pulse { 0%,100% { opacity:1 } 50% { opacity:0.35 } }
-@keyframes blink { 0%,49% { opacity:1 } 50%,100% { opacity:0.25 } }
-::selection { background:var(--amber); color:var(--bg) }
+@keyframes pulse { 0%,100% { opacity:1 } 50% { opacity:0.4 } }
+@keyframes blink { 0%,49% { opacity:1 } 50%,100% { opacity:0.22 } }
+::selection { background:var(--accent); color:var(--on-accent) }
 
 /* ---------- mobile ---------- */
 @media (max-width:560px) {
-  .row { grid-template-columns:62px 1fr; row-gap:10px; padding:12px 13px }
+  .row { grid-template-columns:62px 1fr; row-gap:10px; padding:13px }
   .row-hhmm { font-size:1.3rem }
   .row-clock { grid-column:2; align-items:flex-start }
-  .row-clock-label { margin-top:2px }
-  .sport { font-size:0.76rem; padding:9px 4px }
+  .sport { font-size:0.76rem; padding:10px 4px }
   .hero-when { gap:8px; padding:10px 14px }
 }
 @media (prefers-reduced-motion:reduce) {
