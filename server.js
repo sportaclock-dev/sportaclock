@@ -9,17 +9,16 @@ const PORT = process.env.PORT || 3000;
 const TOKEN = process.env.FOOTBALL_DATA_TOKEN;
 
 /* ------------------------------------------------------------
-   FOOTBALL (football-data.org) — one route, three competitions
-     WC = World Cup 2026
+   FOOTBALL (football-data.org) — one route, two competitions
      PL = Premier League
      CL = UEFA Champions League
    Each competition gets its own 15-minute cache.
    SPOILER SHIELD: only kickoff time, team names, crests, and
    status leave this server. Scores never reach the browser.
    ------------------------------------------------------------ */
-const COMPS = new Set(["WC", "PL", "CL"]);
+const COMPS = new Set(["PL", "CL"]);
 const CACHE_MS = 15 * 60 * 1000; // 15 minutes
-const caches = {}; // { WC: { time, data }, PL: {...}, CL: {...} }
+const caches = {}; // { PL: { time, data }, CL: {...} }
 
 async function footballHandler(comp, res) {
   try {
@@ -294,9 +293,6 @@ app.get("/api/football/:comp", (req, res) => {
   }
   footballHandler(comp, res);
 });
-
-// Kept for backwards compatibility — same as /api/football/WC
-app.get("/api/matches", (req, res) => footballHandler("WC", res));
 
 // Full NFL schedule (ESPN data, scores stripped in nfl.js)
 app.get("/api/nfl", nflRoute);
