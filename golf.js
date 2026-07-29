@@ -35,6 +35,80 @@ const BASE = "https://site.api.espn.com/apis/site/v2/sports/golf";
 const CACHE_MS = 10 * 60 * 1000; // tee times firm up through the week
 let cache = { at: 0, payload: null };
 
+/* ------------------------------------------------------------
+   OFFICIAL WORLD GOLF RANKING
+   owgr.com is a Next.js app that calls this endpoint itself —
+   it's internal plumbing, not a published API, so treat it as
+   breakable. The ranking only changes on Sundays, so it gets its
+   own long cache, and any failure here is swallowed: the route
+   still returns tee times and the frontend falls back to its
+   built-in list. Rankings can never take the golf tab down.
+
+   The site is fronted by Akamai, which may challenge a bare
+   server-side request, hence the browser-ish headers.
+   ------------------------------------------------------------ */
+const OWGR = "https://apiweb.owgr.com/api/owgr";
+const RANK_CACHE_MS = 12 * 60 * 60 * 1000;
+const RANK_COUNT = 30; // a few spare beyond the top 10 we display
+let rankCache = { at: 0, payload: null };
+
+const HEADERS = {
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+    "(KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+  Accept: "application/json, text/plain, */*",
+};
+
+// OWGR nests the name; be liberal about where it sits.
+function rankedName(entry) {
+  const p = (entry && entry.player) || {};
+  return (
+    p.fullName || p.displayName || p.name ||
+    [p.firstName, p.lastName].filter(Boolean).join(" ") ||
+    entry.fullName || entry.name || null
+  );
+}
+
+async function fetchRankings() {
+  if (rankCache.payload && Date.now() - rankCache.at < RANK_CACHE_MS) {
+    return rankCache.payload;
+  }
+  const url = `${OWGR}/rankings/getRankings` +
+    `?regionId=0&pageSize=${RANK_COUNT}&pageNumber=1&countryId=0&sortString=Rank+ASC`;
+  const r = await fetch(url, { headers: HEADERS });
+  if (!r.ok) throw new Error(`OWGR responded ${r.status}`);
+  const data = await r.json();
+
+  const list = Array.isArray(data) ? data
+    : data.rankingsList || data.rankings || data.data || data.items || data.results || [];
+  if (!Array.isArray(list) || !list.length) throw new Error("OWGR returned no ranks");
+
+  const rankings = list
+    .map((e) => {
+      const player = rankedName(e);
+      const rank = num(e.rank) || num(e.position);
+      if (!player || !rank) return null;
+      const lastWeek = num(e.lastWeekRank);
+      return {
+        rank,
+        player,
+        lastWeek,
+        // positive means climbed since last week
+        movement: lastWeek ? lastWeek - rank : null,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.rank - b.rank);
+  if (!rankings.length) throw new Error("OWGR ranks unreadable");
+
+  const payload = {
+    rankings,
+    week: iso(list[0] && list[0].weekEndDate) || null,
+  };
+  rankCache = { at: Date.now(), payload };
+  return payload;
+}
+
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
 const iso = (v) => (typeof v === "string" && !Number.isNaN(Date.parse(v)) ? v : null);
 
@@ -149,9 +223,20 @@ export default async function golfRoute(req, res) {
       .sort((a, b) => a - b);
     const { course, city } = courseOf(comp);
 
+    // Independent of everything above: if this throws, tee times still ship.
+    let ranks = { rankings: [], week: null };
+    try {
+      ranks = await fetchRankings();
+    } catch (e) {
+      console.error("[/api/golf] rankings unavailable:", e.message);
+      if (rankCache.payload) ranks = rankCache.payload; // stale beats none
+    }
+
     const payload = {
       enabled: true,
       fetchedAt: new Date().toISOString(),
+      rankings: ranks.rankings,
+      rankingsWeek: ranks.week,
       tournament: {
         id: String(ev.id),
         name: ev.name || ev.shortName || "PGA Tour event",

@@ -13,6 +13,7 @@ timezone, plus a spoiler-free catch-up zone for the ones you slept through.
 | ⚽ Football | Besta deildin (Iceland) | TheSportsDB |
 | 🏎 Formula 1 | All 22 rounds, every session | Built-in 2026 FIA calendar |
 | ⛳ Golf | PGA Tour tee times, current tournament | ESPN (public endpoint) |
+| ⛳ Golf | World rankings | OWGR (undocumented endpoint) |
 | 🏈 NFL | Full 272-game season + playoffs | ESPN (public endpoint) |
 
 ## The spoiler shield
@@ -58,6 +59,28 @@ time on one day**, not one fixture. That drops straight onto the same
 departure board, so a tee sheet reuses all the existing countdown, grouping
 and night-owl machinery.
 
+The tab has two levels. The overview lists one tappable row per round —
+day, tee window, field size, and a countdown to the first group. A round
+already begun reads *in progress · since 11:00* instead of counting down;
+the earliest round still to start is flagged *next up*. Tapping a round opens
+its tee sheet, keeping the tournament name and course pinned above it. The
+weekend shield sits at the overview level because it decides which rounds
+exist at all.
+
+#### Golf competes as a round, not as 147 golfers
+
+`landingCandidates()` is what each sport puts forward when the site picks where
+to open. Golf offers **the first tee time of each round**, not every player's.
+Without that, a round under way would keep winning all afternoon: a watchlist
+golfer teeing off at 17:13 would outrank a football match at 19:00, because
+some tee time is always a few minutes away. Collapsing to round starts means
+that once the first group is out, golf's next offer is tomorrow's first tee —
+so the football wins, which is what you'd want.
+
+Golf only enters the running if someone on your watchlist is in the field, and
+weekend rounds sit out, since opening on a round the shield is hiding would be
+strange.
+
 What ESPN actually provides, confirmed by probing the live feed:
 
 - `/pga/scoreboard` returns **one tournament** — the current or next one —
@@ -70,9 +93,34 @@ What ESPN actually provides, confirmed by probing the live feed:
   appear mid-tournament, once the cut sets the draw.
 - Event objects carry **no `startDate`**, so every date is derived from the tee
   times themselves.
-- No rankings endpoint works — `/pga/rankings` returns 500, `/golf/rankings`
-  404s, `/pga/standings` comes back empty. Hence `GOLF_TOP10` is maintained by
-  hand in `src/App.jsx`.
+- ESPN carries **no world ranking at all**. Probing a competitor object gives
+  `id, uid, movement, earnings, sortOrder, amateur, featured, status, score,
+  linescores, statistics, athlete` and an athlete of `id, uid, guid,
+  displayName, shortName, lastName, amateur, headshot, flag, links`. Nothing
+  ranking-shaped. Its three ranking endpoints are also dead: `/pga/rankings`
+  500s, `/golf/rankings` 404s, `/pga/standings` is empty. Hence OWGR.
+
+#### World rankings, from OWGR
+
+owgr.com is a Next.js app that calls its own backend, which is what the site
+uses:
+
+```
+GET https://apiweb.owgr.com/api/owgr/rankings/getRankings
+      ?regionId=0&pageSize=30&pageNumber=1&countryId=0&sortString=Rank+ASC
+```
+
+Entries carry `rank`, a nested `player` object, `lastWeekRank`,
+`endLastYearRank` and a pile of points maths. Only `rank`, the flattened
+player name, `lastWeek` and a derived `movement` are forwarded.
+
+This is **not a published API** — it's internal plumbing that can change or be
+withdrawn, and the site sits behind Akamai, which may challenge a server-side
+request. So the whole thing is optional by construction: `fetchRankings()` has
+its own 12-hour cache (the ranking only moves on Sundays) and its own
+try/catch, and a failure there is logged and swallowed. Tee times still ship,
+the frontend falls back to `GOLF_TOP10_FALLBACK`, and the page says plainly
+that the ranking is unavailable. Rankings can never take the golf tab down.
 
 #### The weekend is a spoiler
 
@@ -99,13 +147,20 @@ blocks per round and the single-event lookup endpoint isn't capped, so
 at a time, throttled to stay inside the rate limit. It runs as a background
 refresh so visitors never wait on it.
 
+### Countdown granularity
+
+Only the hero counts seconds. Every row runs to the minute on the 30-second
+clock, so there is exactly **one** subscriber to the 1-second clock on the whole
+page no matter how long the list is. A 294-row tee sheet costs the same as an
+empty one.
+
 ### Performance
 
 One `setInterval` per cadence for the whole page, shared through
-`useSyncExternalStore`. Only the countdowns that are actually inside 24 hours
-tick every second; everything further out rides a 30-second clock. The event
-list re-buckets on a timer scheduled for the next real kickoff or finish, not
-once a second — so a 272-game NFL page isn't redrawing itself continuously.
+`useSyncExternalStore`. The hero is the only component on the 1-second clock;
+every row rides the 30-second one. The event list re-buckets on a timer
+scheduled for the next real kickoff or finish, not once a second — so a
+272-game NFL page isn't redrawing itself continuously.
 
 ## Running it
 
@@ -159,7 +214,17 @@ const GOLF_TOP10  = ["Scottie Scheffler", "Rory McIlroy", ...];
 Your two get the accent rail on their rows; a tee sheet stays chronological
 rather than being reordered, since that's the whole point of a departure board.
 Name matching strips accents, so `"Ludvig Aberg"` still finds `"Ludvig Åberg"`.
-Edit `GOLF_TOP10` when the rankings move — it barely changes week to week.
+`GOLF_TOP_N` sets how deep to follow — the world top 10 by default. That list
+now comes **live from OWGR**; `GOLF_TOP10_FALLBACK` is only used when the
+ranking can't be fetched, and the UI says so when it falls back. Ranked players
+carry a `#3` badge on their row.
+
+Name matching is one shared rule, `samePlayer()`, because the three sources
+disagree: your pinned list says `"McIlroy"`, OWGR says `"Cameron Young"`, ESPN
+says `"Cam Young"`. It tries exact, then substring either way, then surname plus
+first initial. The last of those is what makes Cam and Cameron the same person;
+it could in principle confuse two players sharing a surname and first initial,
+which is an accepted trade.
 
 `THEME` picks the palette. Both are defined as full sets of the same 15 colour
 roles, so switching is one word:
