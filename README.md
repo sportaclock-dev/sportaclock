@@ -12,6 +12,7 @@ timezone, plus a spoiler-free catch-up zone for the ones you slept through.
 | ⚽ Football | Premier League, Champions League | football-data.org |
 | ⚽ Football | Besta deildin (Iceland) | TheSportsDB |
 | 🏎 Formula 1 | All 22 rounds, every session | Built-in 2026 FIA calendar |
+| ⛳ Golf | PGA Tour tee times, current tournament | ESPN (public endpoint) |
 | 🏈 NFL | Full 272-game season + playoffs | ESPN (public endpoint) |
 
 ## The spoiler shield
@@ -43,11 +44,51 @@ nfl.js            Express handler for /api/nfl (ESPN, whole season in one call)
 | `GET /api/football/PL` | Premier League fixtures (15 min cache) |
 | `GET /api/football/CL` | Champions League fixtures (15 min cache) |
 | `GET /api/football/IS` | Besta deildin fixtures (30 min background rebuild) |
+| `GET /api/golf` | Current PGA tournament + tee sheet (10 min cache) |
 | `GET /api/nfl` | Full NFL season (60 min cache) |
 
 Every route answers `{ enabled: false, reason }` rather than an error status when
 a feed is unavailable, and serves stale cache in preference to nothing. The
 frontend degrades to an empty-state message or a built-in fallback schedule.
+
+### Notes on golf
+
+Golf works differently from the other sports: the unit is **one player's tee
+time on one day**, not one fixture. That drops straight onto the same
+departure board, so a tee sheet reuses all the existing countdown, grouping
+and night-owl machinery.
+
+What ESPN actually provides, confirmed by probing the live feed:
+
+- `/pga/scoreboard` returns **one tournament** — the current or next one —
+  already carrying the full field. There's no season schedule, so there is no
+  way to know October's field in July. The tab shows this week and nothing more.
+- Per-round tee times live at `competitors[].linescores[].{period, teeTime}`.
+  `competitors[].status.teeTime` holds only the current round and is used as a
+  fallback.
+- **Rounds 1 and 2 are published together** before play starts. Rounds 3 and 4
+  appear mid-tournament, once the cut sets the draw.
+- Event objects carry **no `startDate`**, so every date is derived from the tee
+  times themselves.
+- No rankings endpoint works — `/pga/rankings` returns 500, `/golf/rankings`
+  404s, `/pga/standings` comes back empty. Hence `GOLF_TOP10` is maintained by
+  hand in `src/App.jsx`.
+
+#### The weekend is a spoiler
+
+Rounds 1 and 2 tee times are drawn at random and give nothing away. Rounds 3
+and 4 are **ordered by score** — a late Sunday tee time tells you someone is in
+contention. On a spoiler-free site that matters, so the weekend sits behind an
+opt-in checkbox, the same pattern as the YouTube highlight links. Before the cut
+the toggle is replaced by a note explaining the tee times aren't drawn yet.
+
+#### Whitelisting, not blacklisting
+
+Golf payloads are the most score-dense on the site: every competitor carries
+strokes, position, earnings and per-round totals, and `teeTime` sits in the same
+object as the round score. So `golf.js` **whitelists** the three fields it
+forwards — `period`, `teeTime`, `startHole` — rather than deleting the bad ones.
+Any field ESPN adds later is dropped by default instead of leaking.
 
 ### Notes on the Iceland feed
 
@@ -107,6 +148,18 @@ const PINNED_TEAM = { pl: "Liverpool", cl: "Liverpool", nfl: "Eagles" };
 with the accent colour; everyone else sorts alphabetically. Matching is by
 substring, so `"Liverpool"` catches `"Liverpool FC"` and `"Eagles"` catches
 `"Philadelphia Eagles"`.
+
+For golf, `GOLF_PINNED` and `GOLF_TOP10` do the same job:
+
+```js
+const GOLF_PINNED = ["Rory McIlroy", "Scottie Scheffler"];
+const GOLF_TOP10  = ["Scottie Scheffler", "Rory McIlroy", ...];
+```
+
+Your two get the accent rail on their rows; a tee sheet stays chronological
+rather than being reordered, since that's the whole point of a departure board.
+Name matching strips accents, so `"Ludvig Aberg"` still finds `"Ludvig Åberg"`.
+Edit `GOLF_TOP10` when the rankings move — it barely changes week to week.
 
 `THEME` picks the palette. Both are defined as full sets of the same 15 colour
 roles, so switching is one word:

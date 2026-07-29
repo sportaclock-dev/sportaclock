@@ -2,6 +2,7 @@ import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
 import nflRoute from "./nfl.js";
+import golfRoute from "./golf.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -296,6 +297,7 @@ app.get("/api/football/:comp", (req, res) => {
 
 // Full NFL schedule (ESPN data, scores stripped in nfl.js)
 app.get("/api/nfl", nflRoute);
+app.get("/api/golf", golfRoute);
 
 // Serve the built frontend
 app.use(express.static(path.join(__dirname, "dist")));
