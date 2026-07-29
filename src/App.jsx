@@ -623,7 +623,7 @@ function buildEvents(sport, league, football, nflApi, golfApi) {
         player: x.player,
         round: x.round,
         venue: t.course || "",
-        city: t.city || "",
+        city: t.where || t.city || "",
         tag: x.round ? `Round ${x.round}` : "Tee time",
         stage: x.round ? `Round ${x.round}` : "Tee time",
         sub: x.startHole ? `${ordinal(x.startHole)} tee` : "",
@@ -709,7 +709,8 @@ export default function App() {
   });
   const [nflApi, setNflApi] = useState({ enabled: false, events: [] });
   const [golfApi, setGolfApi] = useState({
-    enabled: false, teeTimes: [], tournament: null, rankings: [], rankingsWeek: null,
+    enabled: false, teeTimes: [], tournament: null,
+    rankings: [], rankingsWeek: null, schedule: [],
   });
   const [golfScope, setGolfScope] = useState("watchlist"); // mine | watchlist | field
   // Live top N when OWGR answered, the built-in list when it didn't.
@@ -775,6 +776,7 @@ export default function App() {
             tournament: data.tournament || null,
             rankings: data.rankings || [],
             rankingsWeek: data.rankingsWeek || null,
+            schedule: data.schedule || [],
           });
         }
       } catch { /* golf tab shows an empty state */ }
@@ -837,6 +839,18 @@ export default function App() {
     if (sport !== "golf") return leagueCfg ? leagueCfg.stages : cfg.stages;
     return ["All"]; // golf gets dedicated round chips inside the tee sheet
   }, [sport, leagueCfg, cfg]);
+
+  /* Everything else on the calendar. ESPN publishes a field only during
+     tournament week, so these rows carry dates and venue but no tee times —
+     they fill in on their own a few days out. */
+  const laterTournaments = useMemo(() => {
+    if (sport !== "golf") return [];
+    return (golfApi.schedule || [])
+      .filter((t) => t.id !== golfApi.tournament?.id && t.start)
+      .map((t) => ({ ...t, startMs: Date.parse(t.start), endMs: Date.parse(t.end) }))
+      .filter((t) => Number.isFinite(t.startMs))
+      .sort((a, b) => a.startMs - b.startMs);
+  }, [sport, golfApi]);
 
   // which of your two are actually in this week's field
   const golfPinnedIn = useMemo(() => {
@@ -1091,11 +1105,8 @@ export default function App() {
                 : golfTourn.detail || "Starts soon"}
             </p>
             <h2 className="tourn-name">{golfTourn.name}</h2>
-            {(golfTourn.course || golfTourn.city) && (
-              <p className="tourn-where">
-                {[golfTourn.course, golfTourn.city].filter(Boolean).join(" · ")}
-              </p>
-            )}
+            {golfTourn.course && <p className="tourn-course">{golfTourn.course}</p>}
+            {golfTourn.where && <p className="tourn-where">{golfTourn.where}</p>}
             {golfRound === null && (
               <>
                 <p className="tourn-field">
@@ -1218,6 +1229,39 @@ export default function App() {
               <button className="link seeall" onClick={() => setGolfRound("all")}>
                 Or see every round in one list
               </button>
+            )}
+
+            {laterTournaments.length > 0 && (
+              <div className="day later">
+                <h3 className="dayhead">Later this season</h3>
+                {laterTournaments.map((t) => (
+                  <article key={t.id} className="row row--sched">
+                    <div className="row-time">
+                      <time dateTime={t.start} className="row-hhmm row-hhmm--date">
+                        {new Date(t.startMs).toLocaleDateString([],
+                          { day: "numeric", month: "short" })}
+                      </time>
+                      <span className="row-dow">{fmtWeekdayShort(t.startMs)}</span>
+                    </div>
+                    <div className="row-main">
+                      <span className="ev-name">{t.name}</span>
+                      {t.course && <div className="row-where">{t.course}</div>}
+                      {t.where && <div className="row-sub">{t.where}</div>}
+                      {!t.course && !t.where && (
+                        <div className="row-sub">Venue confirmed nearer the week</div>
+                      )}
+                    </div>
+                    <div className="row-clock">
+                      <Countdown to={t.startMs} />
+                      <span className="row-clock-label">to first round</span>
+                    </div>
+                  </article>
+                ))}
+                <p className="filternote">
+                  Tee times appear here automatically once the field is published,
+                  usually two or three days before play starts.
+                </p>
+              </div>
             )}
           </section>
         )}
@@ -1775,6 +1819,10 @@ button { font-family:inherit; cursor:pointer }
 /* one of your players — golf tee sheets stay chronological, so the rail
    is how you spot them rather than reordering the board */
 .row--mine { border-left-color:var(--accent) }
+/* a future tournament: informational, nothing to open yet */
+.row--sched { border-left-color:var(--line) }
+.row-hhmm--date { font-size:1.05rem; letter-spacing:0 }
+.later { margin-top:26px }
 .row--mine .ev-name { color:var(--text) }
 
 .row-time { text-align:left }
@@ -1835,7 +1883,8 @@ button { font-family:inherit; cursor:pointer }
   color:var(--accent-soft); font-weight:700; margin-bottom:6px;
 }
 .tourn-name { margin:0 0 4px; font-size:1.15rem; font-weight:700 }
-.tourn-where { color:var(--muted); font-size:0.84rem }
+.tourn-course { color:var(--text); font-size:0.9rem; font-weight:600; margin-top:2px }
+.tourn-where { color:var(--muted); font-size:0.8rem; margin-top:3px }
 .tourn-field { color:var(--dim); font-size:0.76rem; margin-top:4px }
 .tourn-yes { color:var(--accent-soft); font-size:0.8rem; margin-top:8px; font-weight:600 }
 .tourn-no { color:var(--muted); font-size:0.8rem; margin-top:8px; line-height:1.5 }
