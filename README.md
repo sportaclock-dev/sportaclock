@@ -59,7 +59,12 @@ time on one day**, not one fixture. That drops straight onto the same
 departure board, so a tee sheet reuses all the existing countdown, grouping
 and night-owl machinery.
 
-The tab has two levels. The overview lists one tappable row per round —
+The tab has two levels. The overview leads with the current tournament, then
+one tappable row per round, then **Later this season** — the next tournaments
+with their dates, venue and a countdown to the first round. Those rows aren't
+tappable, because there is nothing to open until ESPN publishes the field.
+
+The overview lists one tappable row per round —
 day, tee window, field size, and a countdown to the first group. A round
 already begun reads *in progress · since 11:00* instead of counting down;
 the earliest round still to start is flagged *next up*. Tapping a round opens
@@ -83,9 +88,16 @@ strange.
 
 What ESPN actually provides, confirmed by probing the live feed:
 
-- `/pga/scoreboard` returns **one tournament** — the current or next one —
-  already carrying the full field. There's no season schedule, so there is no
-  way to know October's field in July. The tab shows this week and nothing more.
+- `/pga/scoreboard` alone returns **one tournament**. Adding `?dates=YYYY`
+  returns the whole season — 48 events — which is where the schedule comes
+  from. Future events come back with **no competitors**: ESPN only publishes a
+  field during tournament week, so the tab lists the next six tournaments and
+  their tee times fill in on their own a few days out.
+- Events carry `date` and `endDate`, **not** `startDate`. Looking for the
+  latter is what made an earlier version think there were no dates at all.
+- Courses live only on the **leaderboard** response, at `events[0].courses[0]`.
+  The scoreboard has no venue data whatsoever, so the route fetches a
+  leaderboard per tournament, in parallel, tolerating individual failures.
 - Per-round tee times live at `competitors[].linescores[].{period, teeTime}`.
   `competitors[].status.teeTime` holds only the current round and is used as a
   fallback.
@@ -93,6 +105,10 @@ What ESPN actually provides, confirmed by probing the live feed:
   appear mid-tournament, once the cut sets the draw.
 - Event objects carry **no `startDate`**, so every date is derived from the tee
   times themselves.
+- The course is **not** at `competitions[0].venue`, which came back empty
+  against the live feed. `placeOf()` therefore tries every plausible path —
+  `competitions[0].venue`, `.course`, `.courses[0]`, `events[0].courses[0]` —
+  and takes the first that yields a name or a city.
 - ESPN carries **no world ranking at all**. Probing a competitor object gives
   `id, uid, movement, earnings, sortOrder, amateur, featured, status, score,
   linescores, statistics, athlete` and an athlete of `id, uid, guid,
@@ -121,6 +137,27 @@ its own 12-hour cache (the ranking only moves on Sundays) and its own
 try/catch, and a failure there is logged and swallowed. Tee times still ship,
 the frontend falls back to `GOLF_TOP10_FALLBACK`, and the page says plainly
 that the ranking is unavailable. Rankings can never take the golf tab down.
+
+#### Where it's being played
+
+`courses[0]` reliably carries a **name**; whether it carries an `address` is
+inconsistent. So `placeOf()` tries every plausible path, accepts either a
+structured `address` or a bare `"Detroit, MI"` string, and prefers a candidate
+that has location data over one with only a name.
+
+Whatever it finds is then enriched: `MI` becomes Michigan, `UAE` becomes United
+Arab Emirates, a US state with no country stated implies the United States, and
+the country maps to a continent from a built-in table — no sports feed carries a
+continent. The parts are composed into one `where` string, skipping anything
+missing rather than leaving a gap:
+
+```
+Detroit · Michigan · United States · North America
+Dubai · United Arab Emirates · Asia
+```
+
+If ESPN gives no address, the course name shows alone and no location is
+invented.
 
 #### The weekend is a spoiler
 
