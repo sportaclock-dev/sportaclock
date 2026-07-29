@@ -161,17 +161,6 @@ const SPORTS = {
       { name: "Sky Sports F1 (UK)", url: "https://www.skysports.com/watch/sky-sports-f1" },
     ],
   },
-  golf: {
-    icon: "⛳", label: "Golf",
-    eyebrow: "PGA Tour · tee times for the players you follow",
-    nextLabel: "Next off the tee", clockLabel: "to tee off",
-    durationMin: 300, // roughly a round on the course
-    stages: ["All"], // replaced at runtime by the rounds actually published
-    replays: [
-      { name: "Sky Sports Golf (UK)", url: "https://www.skysports.com/golf" },
-      { name: "PGA Tour", url: "https://www.pgatour.com" },
-    ],
-  },
   nfl: {
     icon: "🏈", label: "NFL",
     eyebrow: "NFL 2026 · 107th season · every game",
@@ -181,6 +170,17 @@ const SPORTS = {
     replays: [
       { name: "NFL Game Pass (DAZN)", url: "https://www.dazn.com/en-IS/l/nfl-game-pass" },
       { name: "NFL+", url: "https://www.nfl.com/plus/" },
+    ],
+  },
+  golf: {
+    icon: "⛳", label: "Golf",
+    eyebrow: "PGA Tour · tee times for the players you follow",
+    nextLabel: "Next off the tee", clockLabel: "to tee off",
+    durationMin: 300, // roughly a round on the course
+    stages: ["All"], // replaced at runtime by the rounds actually published
+    replays: [
+      { name: "Sky Sports Golf (UK)", url: "https://www.skysports.com/golf" },
+      { name: "PGA Tour", url: "https://www.pgatour.com" },
     ],
   },
 };
@@ -225,27 +225,53 @@ const PINNED_TEAM = { pl: "Liverpool", cl: "Liverpool", nfl: "Eagles" };
    ------------------------------------------------------------ */
 const GOLF_PINNED = ["Rory McIlroy", "Scottie Scheffler"];
 
-const GOLF_TOP10 = [
+/* How many of the world top N to follow. */
+const GOLF_TOP_N = 10;
+
+/* Fallback only — used when OWGR can't be reached. Correct as of the week of
+   26 July 2026, straight from the ranking. The live list from /api/golf takes
+   precedence whenever it's available, so this rarely gets used. */
+const GOLF_TOP10_FALLBACK = [
   "Scottie Scheffler",
   "Rory McIlroy",
-  "Xander Schauffele",
+  "Cameron Young",
+  "Matt Fitzpatrick",
+  "Russell Henley",
+  "Tommy Fleetwood",
+  "Chris Gotterup",
   "Collin Morikawa",
-  "Ludvig Aberg",
-  "Bryson DeChambeau",
-  "Justin Thomas",
-  "Hideki Matsuyama",
-  "Viktor Hovland",
-  "Patrick Cantlay",
+  "Wyndham Clark",
+  "Sam Burns",
 ];
 
-const GOLF_WATCHLIST = [...new Set([...GOLF_PINNED, ...GOLF_TOP10])];
+/* Your two, then the world top N — live from OWGR when we have it, the
+   built-in list when we don't. */
+function buildWatchlist(rankings) {
+  const top = (rankings || []).slice(0, GOLF_TOP_N).map((r) => r.player);
+  return [...new Set([...GOLF_PINNED, ...(top.length ? top : GOLF_TOP10_FALLBACK)])];
+}
 
 // strip accents so "Åberg" and "Aberg" compare equal
 const norm = (str) =>
   String(str || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 
-const nameMatches = (player, wanted) => norm(player).includes(norm(wanted));
-const onList = (player, list) => list.some((n) => nameMatches(player, n));
+/* Three sources disagree about spelling: your hand-written pinned list
+   ("McIlroy"), OWGR ("Cameron Young") and ESPN ("Cam Young"). One rule for
+   all of them — exact, then substring either way, then surname plus first
+   initial, which is what rescues Cam against Cameron. */
+const nameKey = (str) => {
+  const parts = norm(str).split(/\s+/).filter(Boolean);
+  return parts.length ? `${parts[parts.length - 1]}|${parts[0][0]}` : "";
+};
+
+function samePlayer(a, b) {
+  const x = norm(a), y = norm(b);
+  if (!x || !y) return false;
+  if (x === y || x.includes(y) || y.includes(x)) return true;
+  return nameKey(a) === nameKey(b);
+}
+
+const onList = (player, list) => list.some((n) => samePlayer(player, n));
 
 /* Round 1 and 2 tee times are drawn at random — harmless.
    Rounds 3 and 4 are ordered by score, so a late Sunday time
@@ -253,11 +279,17 @@ const onList = (player, list) => list.some((n) => nameMatches(player, n));
    spoiler-free site, so the weekend stays behind an opt-in. */
 const WEEKEND_ROUNDS = [3, 4];
 
-const golfVisible = (ev, scope, showWeekend) => {
+const golfVisible = (ev, scope, showWeekend, watchlist) => {
   if (!showWeekend && WEEKEND_ROUNDS.includes(ev.round)) return false;
   if (scope === "field") return true;
-  return onList(ev.player, scope === "mine" ? GOLF_PINNED : GOLF_WATCHLIST);
+  return onList(ev.player, scope === "mine" ? GOLF_PINNED : watchlist);
 };
+
+/* rankings arrive sorted, so the first match is the best-ranked one */
+function findRank(player, rankings) {
+  const hit = (rankings || []).find((r) => samePlayer(player, r.player));
+  return hit ? hit.rank : null;
+}
 
 const ordinal = (n) => {
   if (!n) return "";
@@ -406,18 +438,19 @@ function EventName({ ev, className = "ev-name" }) {
   return <span className={className}>{a}{b && <> {sep} {b}</>}</span>;
 }
 
-// Compact row countdown. Subscribes to the 1s clock only inside 24 hours.
+/* Row countdowns run to the minute, never the second. Only the hero ticks
+   once a second, so a 300-row tee sheet costs almost nothing: every row here
+   rides the 30-second clock instead. */
 const Countdown = React.memo(function Countdown({ to }) {
-  const coarse = useTick("slow");
-  const near = to - coarse < DAY_MS;
-  const now = useTick(near ? "fast" : "slow");
+  const now = useTick("slow");
   const ms = Math.max(0, to - now);
-  const { d, h, m, s } = parts(ms);
+  const { d, h, m } = parts(ms);
   return (
     <span className="cd" aria-label={spokenCountdown(ms)}>
-      {d > 0
-        ? <>{d}<i>d</i>{" "}{pad(h)}<i>h</i></>
-        : <>{pad(h)}<i>:</i>{pad(m)}<i>:</i>{pad(s)}</>}
+      {d > 0 ? <>{d}<i>d</i>{" "}{pad(h)}<i>h</i></>
+        : h > 0 ? <>{pad(h)}<i>h</i>{" "}{pad(m)}<i>m</i></>
+        : ms >= 60000 ? <>{m}<i>m</i></>
+        : <i>under a minute</i>}
     </span>
   );
 });
@@ -465,6 +498,26 @@ function StagePill({ ev }) {
   return <span className="pill">{ev.tag}</span>;
 }
 
+/* A clickable departure-board row — used for the golf drill-down.
+   role/tabIndex/keydown so it works from the keyboard too, not just a mouse. */
+function TapRow({ className = "", onOpen, label, children }) {
+  return (
+    <article
+      className={`row row--tap ${className}`}
+      role="button"
+      tabIndex={0}
+      aria-label={label}
+      onClick={onOpen}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(); }
+      }}
+    >
+      {children}
+      <span className="row-go" aria-hidden="true">›</span>
+    </article>
+  );
+}
+
 /* The departure-board row. Memoised so the parent can re-render freely. */
 const EventRow = React.memo(function EventRow({ ev, clockLabel, off }) {
   const owl = !off && isNightOwl(ev.kickoff);
@@ -488,6 +541,7 @@ const EventRow = React.memo(function EventRow({ ev, clockLabel, off }) {
 
       <div className="row-main">
         <div className="row-meta">
+          {ev.rank && <span className="rank" title={`World number ${ev.rank}`}>#{ev.rank}</span>}
           <StagePill ev={ev} />
           {owl && <span className="owl">🌙 night owl</span>}
         </div>
@@ -557,6 +611,7 @@ function buildEvents(sport, league, football, nflApi, golfApi) {
   if (sport === "golf") {
     if (!golfApi || !golfApi.enabled) return [];
     const t = golfApi.tournament || {};
+    const ranks = golfApi.rankings || [];
     return (golfApi.teeTimes || [])
       .filter((x) => x.teeTime && x.player)
       .map((x) => ({
@@ -573,6 +628,7 @@ function buildEvents(sport, league, football, nflApi, golfApi) {
         stage: x.round ? `Round ${x.round}` : "Tee time",
         sub: x.startHole ? `${ordinal(x.startHole)} tee` : "",
         mine: onList(x.player, GOLF_PINNED),
+        rank: findRank(x.player, ranks),
       }))
       .sort((a, b) => a.kickoff - b.kickoff);
   }
@@ -604,10 +660,34 @@ function buildEvents(sport, league, football, nflApi, golfApi) {
     .sort((a, b) => a.kickoff - b.kickoff);
 }
 
+/* What each sport puts forward when the site decides where to open.
+
+   Golf competes as a ROUND, not as 147 separate tee times. Once the first
+   group is out, the round stops being "upcoming" — so a golfer teeing off at
+   17:13 on a Thursday afternoon can no longer outrank a football match at
+   19:00 that evening. The next thing golf offers is tomorrow's first tee.
+
+   Golf only enters the running at all if someone on your watchlist is in the
+   field, and weekend rounds sit out because they're shielded by default —
+   opening on a round you've chosen not to see would be odd. */
+function landingCandidates(sport, league, football, nflApi, golfApi, watchlist) {
+  const evs = buildEvents(sport, league, football, nflApi, golfApi);
+  if (sport !== "golf") return evs;
+  if (!evs.some((ev) => onList(ev.player, watchlist))) return [];
+
+  const firstOfRound = new Map();
+  for (const ev of evs) {
+    if (!ev.round || WEEKEND_ROUNDS.includes(ev.round)) continue;
+    const held = firstOfRound.get(ev.round);
+    if (!held || ev.kickoff < held.kickoff) firstOfRound.set(ev.round, ev);
+  }
+  return [...firstOfRound.values()];
+}
+
 // Every competition the auto-jump considers, in tie-break order.
 const ALL_VIEWS = [
   ["football", "pl"], ["football", "cl"], ["football", "is"],
-  ["f1", null], ["golf", null], ["nfl", null],
+  ["f1", null], ["nfl", null], ["golf", null],
 ];
 
 /* ============================================================ */
@@ -628,8 +708,17 @@ export default function App() {
     is: { enabled: false, matches: [] },
   });
   const [nflApi, setNflApi] = useState({ enabled: false, events: [] });
-  const [golfApi, setGolfApi] = useState({ enabled: false, teeTimes: [], tournament: null });
+  const [golfApi, setGolfApi] = useState({
+    enabled: false, teeTimes: [], tournament: null, rankings: [], rankingsWeek: null,
+  });
   const [golfScope, setGolfScope] = useState("watchlist"); // mine | watchlist | field
+  // Live top N when OWGR answered, the built-in list when it didn't.
+  const golfWatchlist = useMemo(
+    () => buildWatchlist(golfApi.rankings), [golfApi.rankings],
+  );
+  const ranksAreLive = (golfApi.rankings || []).length > 0;
+  // null = tournament overview, a number = that round's tee sheet, "all" = every round
+  const [golfRound, setGolfRound] = useState(null);
   const [showWeekend, setShowWeekend] = useState(false);
   const [loaded, setLoaded] = useState({ football: false, nfl: false, golf: false });
   const [autoDone, setAutoDone] = useState(false);
@@ -684,6 +773,8 @@ export default function App() {
             enabled: true,
             teeTimes: data.teeTimes,
             tournament: data.tournament || null,
+            rankings: data.rankings || [],
+            rankingsWeek: data.rankingsWeek || null,
           });
         }
       } catch { /* golf tab shows an empty state */ }
@@ -709,10 +800,7 @@ export default function App() {
     const now = Date.now();
     let bestLive = null, bestNext = null;
     for (const [s, l] of ALL_VIEWS) {
-      for (const ev of buildEvents(s, l, football, nflApi, golfApi)) {
-        // Golf would otherwise always win — 147 players tee off every
-        // Thursday. Only the watchlist counts, and never the weekend.
-        if (s === "golf" && !golfVisible(ev, "watchlist", false)) continue;
+      for (const ev of landingCandidates(s, l, football, nflApi, golfApi, golfWatchlist)) {
         const kind = classify(ev, now);
         if (kind === "live" && (!bestLive || ev.kickoff < bestLive.ev.kickoff)) {
           bestLive = { s, l, ev };
@@ -734,24 +822,27 @@ export default function App() {
       if (pick.l) setLeague(pick.l);
       setStage("All");
     }
-    setJumped(pick.ev.home ? `${pick.ev.home} vs ${pick.ev.away}` : pick.ev.title);
-  }, [loaded, football, nflApi, golfApi, autoDone, sport, league]);
+    setJumped(
+      pick.s === "golf"
+        ? [golfApi.tournament?.name || "the next tournament",
+           pick.ev.round ? `Round ${pick.ev.round}` : null].filter(Boolean).join(" — ")
+        : pick.ev.home ? `${pick.ev.home} vs ${pick.ev.away}` : pick.ev.title,
+    );
+  }, [loaded, football, nflApi, golfApi, golfWatchlist, autoDone, sport, league]);
 
   const cfg = SPORTS[sport];
   const leagueCfg = sport === "football" ? LEAGUES[league] : null;
   const golfTourn = golfApi.tournament;
   const stages = useMemo(() => {
     if (sport !== "golf") return leagueCfg ? leagueCfg.stages : cfg.stages;
-    const published = (golfTourn?.roundsPublished || [])
-      .filter((r) => showWeekend || !WEEKEND_ROUNDS.includes(r));
-    return published.length > 1 ? ["All", ...published.map((r) => `Round ${r}`)] : ["All"];
-  }, [sport, leagueCfg, cfg, golfTourn, showWeekend]);
+    return ["All"]; // golf gets dedicated round chips inside the tee sheet
+  }, [sport, leagueCfg, cfg]);
 
   // which of your two are actually in this week's field
   const golfPinnedIn = useMemo(() => {
     if (sport !== "golf" || !golfApi.enabled) return [];
     return GOLF_PINNED.filter((n) =>
-      golfApi.teeTimes.some((t) => nameMatches(t.player, n)));
+      golfApi.teeTimes.some((t) => samePlayer(t.player, n)));
   }, [sport, golfApi]);
 
   const weekendAvailable = (golfTourn?.roundsPublished || [])
@@ -767,14 +858,18 @@ export default function App() {
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return events.filter((ev) => {
-      if (sport === "golf" && !golfVisible(ev, golfScope, showWeekend)) return false;
+      if (sport === "golf") {
+        if (!golfVisible(ev, golfScope, showWeekend, golfWatchlist)) return false;
+        if (typeof golfRound === "number" && ev.round !== golfRound) return false;
+      }
       if (stage !== "All" && ev.stage !== stage) return false;
       if (teamFilter && ev.home !== teamFilter && ev.away !== teamFilter) return false;
       if (!q) return true;
       return [ev.home, ev.away, ev.title, ev.player, ev.sub, ev.venue, ev.city]
         .filter(Boolean).join(" ").toLowerCase().includes(q);
     });
-  }, [events, query, stage, teamFilter, sport, golfScope, showWeekend]);
+  }, [events, query, stage, teamFilter, sport, golfScope, showWeekend, golfRound,
+      golfWatchlist]);
 
   /* ---- re-bucket exactly when something starts or ends, not every second ---- */
   const [boundary, setBoundary] = useState(() => Date.now());
@@ -790,6 +885,52 @@ export default function App() {
     const id = setTimeout(() => setBoundary(Date.now()), Math.max(delay, 1000));
     return () => clearTimeout(id);
   }, [events, boundary]);
+
+  /* One entry per published round: when the first and last groups go out, and
+     how many are in it. Deliberately NOT scope-filtered — the overview should
+     describe the actual tee sheet, not your watchlist. */
+  const golfRounds = useMemo(() => {
+    if (sport !== "golf") return [];
+    const byRound = new Map();
+    for (const ev of events) {
+      if (!ev.round) continue;
+      if (!showWeekend && WEEKEND_ROUNDS.includes(ev.round)) continue;
+      if (!byRound.has(ev.round)) byRound.set(ev.round, []);
+      byRound.get(ev.round).push(ev);
+    }
+    return [...byRound.entries()]
+      .map(([round, list]) => {
+        list.sort((a, b) => a.kickoff - b.kickoff);
+        const first = list[0].kickoff;
+        const last = list[list.length - 1].kickoff;
+        // the last group needs about five hours to get round
+        const closes = last + 5 * 3600000;
+        return {
+          round, first, last,
+          count: list.length,
+          mine: list.filter((e) => e.mine).length,
+          state: boundary < first ? "upcoming" : boundary < closes ? "underway" : "done",
+        };
+      })
+      .sort((a, b) => a.round - b.round);
+  }, [sport, events, showWeekend, boundary]);
+
+  /* Two different ideas, which were conflated and mislabelled a round already
+     in progress as "next up":
+       focusRound  — what deserves the accent rail: the round under way if
+                     there is one, otherwise the next to start.
+       nextToStart — the earliest round that hasn't begun. This is the only
+                     one that gets a "next up" label. */
+  const focusRound = useMemo(
+    () => golfRounds.find((r) => r.state === "underway")
+      || golfRounds.find((r) => r.state === "upcoming")
+      || golfRounds[golfRounds.length - 1] || null,
+    [golfRounds],
+  );
+  const nextToStart = useMemo(
+    () => golfRounds.find((r) => r.state === "upcoming") || null,
+    [golfRounds],
+  );
 
   const buckets = useMemo(() => {
     const live = [], upcoming = [], finished = [], off = [];
@@ -851,7 +992,10 @@ export default function App() {
     setStage("All"); setQuery(""); setTeamFilter(null);
     setGolfScope("watchlist");
   };
-  const switchSport = (s) => { pinned.current = true; setJumped(null); setSport(s); clearFilters(); };
+  const openGolfRound = (r) => setGolfRound(r);
+  const switchSport = (s) => {
+    pinned.current = true; setJumped(null); setSport(s); setGolfRound(null); clearFilters();
+  };
   const switchLeague = (l) => { pinned.current = true; setJumped(null); setLeague(l); clearFilters(); };
 
   const ytQuery = (ev) => {
@@ -863,6 +1007,9 @@ export default function App() {
     return `https://www.youtube.com/results?search_query=${
       encodeURIComponent(`${matchup} ${context} highlights`)}`;
   };
+
+  // true while the golf tab is showing the round list rather than a tee sheet
+  const golfOverview = sport === "golf" && golfRound === null && tab === "upcoming";
 
   const feedLive = sport === "football"
     ? !!football[league]?.enabled
@@ -928,9 +1075,15 @@ export default function App() {
           </p>
         )}
 
-        {/* ---------- golf: which tournament is on ---------- */}
+        {/* ---------- golf: tournament header (always) ---------- */}
         {sport === "golf" && golfTourn && (
-          <section className="tourn" aria-label="Tournament">
+          <section className={`tourn${golfRound !== null ? " tourn--slim" : ""}`}
+                   aria-label="Tournament">
+            {golfRound !== null && (
+              <button className="back" onClick={() => setGolfRound(null)}>
+                ‹ All rounds
+              </button>
+            )}
             <p className="tourn-eyebrow">
               {golfTourn.state === "in"
                 ? `On the course now${golfTourn.currentRound ? ` · Round ${golfTourn.currentRound}` : ""}`
@@ -943,38 +1096,143 @@ export default function App() {
                 {[golfTourn.course, golfTourn.city].filter(Boolean).join(" · ")}
               </p>
             )}
-            <p className="tourn-field">
-              {golfTourn.fieldSize} in the field
-              {golfTourn.roundsPublished?.length > 0 && (
-                <> · tee times out for round{golfTourn.roundsPublished.length > 1 ? "s" : ""}{" "}
-                  {golfTourn.roundsPublished.join(" and ")}</>
-              )}
+            {golfRound === null && (
+              <>
+                <p className="tourn-field">
+                  {golfTourn.fieldSize} in the field
+                  {golfTourn.roundsPublished?.length > 0 && (
+                    <> · tee times out for round{golfTourn.roundsPublished.length > 1 ? "s" : ""}{" "}
+                      {golfTourn.roundsPublished.join(" and ")}</>
+                  )}
+                </p>
+                {golfPinnedIn.length === GOLF_PINNED.length ? (
+                  <p className="tourn-yes">
+                    Both {GOLF_PINNED.map((n) => n.split(" ").pop()).join(" and ")} are playing.
+                  </p>
+                ) : golfPinnedIn.length > 0 ? (
+                  <p className="tourn-yes">
+                    {golfPinnedIn.map((n) => n.split(" ").pop()).join(" and ")} is playing.{" "}
+                    {GOLF_PINNED.filter((n) => !golfPinnedIn.includes(n))
+                      .map((n) => n.split(" ").pop()).join(" and ")} is not.
+                  </p>
+                ) : (
+                  <p className="tourn-no">
+                    Neither {GOLF_PINNED.map((n) => n.split(" ").pop()).join(" nor ")} is in
+                    this field — your watchlist is shown instead.
+                  </p>
+                )}
+              </>
+            )}
+          </section>
+        )}
+
+        {/* The weekend shield belongs here, not in the filters — it decides which
+            rounds exist at all, so it has to be reachable from the overview. */}
+        {sport === "golf" && golfApi.enabled && (
+          weekendAvailable ? (
+            <label className="toggle toggle--weekend">
+              <input
+                type="checkbox"
+                checked={showWeekend}
+                onChange={(e) => setShowWeekend(e.target.checked)}
+              />
+              <span>
+                Show rounds 3 and 4 — weekend tee times are ordered by score, so a late
+                Sunday slot hints at who's in contention
+              </span>
+            </label>
+          ) : (
+            <p className="filternote filternote--golf">
+              Rounds 3 and 4 aren't drawn yet — those tee times are set after the cut.
             </p>
-            {golfPinnedIn.length === GOLF_PINNED.length ? (
-              <p className="tourn-yes">
-                Both {GOLF_PINNED.map((n) => n.split(" ").pop()).join(" and ")} are playing.
-              </p>
-            ) : golfPinnedIn.length > 0 ? (
-              <p className="tourn-yes">
-                {golfPinnedIn.map((n) => n.split(" ").pop()).join(" and ")} is playing.{" "}
-                {GOLF_PINNED.filter((n) => !golfPinnedIn.includes(n))
-                  .map((n) => n.split(" ").pop()).join(" and ")} is not.
-              </p>
-            ) : (
-              <p className="tourn-no">
-                Neither {GOLF_PINNED.map((n) => n.split(" ").pop()).join(" nor ")} is in
-                this field — showing the rest of your watchlist instead.
-              </p>
+          )
+        )}
+
+        {/* ---------- golf overview: a row per round, tap to open ---------- */}
+        {sport === "golf" && golfRound === null && tab === "upcoming" && (
+          <section aria-label="Rounds">
+            {golfRounds.length === 0 && (
+              <div className="empty">
+                {golfApi.enabled
+                  ? "Tee times for this tournament aren't drawn yet."
+                  : "No tee times right now. ESPN publishes them a day or two before each tournament, so this fills in during tournament week."}
+              </div>
+            )}
+            {golfRounds.map((r) => (
+              <TapRow
+                key={r.round}
+                className={`${focusRound?.round === r.round ? "row--mine" : ""}` +
+                  `${r.state === "done" ? " row--off" : ""}`}
+                label={`Round ${r.round} tee times`}
+                onOpen={() => setGolfRound(r.round)}
+              >
+                <div className="row-time">
+                  <time dateTime={new Date(r.first).toISOString()} className="row-hhmm">
+                    {fmtTime(r.first)}
+                  </time>
+                  <span className="row-dow">{fmtWeekdayShort(r.first)}</span>
+                </div>
+                <div className="row-main">
+                  <div className="row-meta">
+                    <span className="pill">Round {r.round}</span>
+                    {nextToStart?.round === r.round && (
+                      <span className="owl">next up</span>
+                    )}
+                    {r.state === "underway" && (
+                      <span className="owl">in progress</span>
+                    )}
+                  </div>
+                  <span className="ev-name">{fmtDateHeading(r.first)}</span>
+                  <div className="row-where">
+                    {r.count} tee times · first off {fmtTime(r.first)}, last {fmtTime(r.last)}
+                  </div>
+                  {r.mine > 0 && (
+                    <div className="row-sub">
+                      {GOLF_PINNED.map((n) => n.split(" ").pop()).join(" and ")} out this round
+                    </div>
+                  )}
+                </div>
+                <div className="row-clock">
+                  {r.state === "upcoming" ? (
+                    <>
+                      <Countdown to={r.first} />
+                      <span className="row-clock-label">to first tee</span>
+                    </>
+                  ) : r.state === "underway" ? (
+                    <>
+                      <span className="livetag">● Under way</span>
+                      <span className="row-clock-label">since {fmtTime(r.first)}</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="done">Finished</span>
+                      <span className="row-clock-label">
+                        {fmtTime(r.first)}–{fmtTime(r.last)}
+                      </span>
+                    </>
+                  )}
+                </div>
+              </TapRow>
+            ))}
+            {golfRounds.length > 0 && (
+              <button className="link seeall" onClick={() => setGolfRound("all")}>
+                Or see every round in one list
+              </button>
             )}
           </section>
         )}
 
         {/* ---------- hero: the next event ---------- */}
-        {tab === "upcoming" && nextEvent && (
+        {tab === "upcoming" && nextEvent && !golfOverview && (
           <section className="hero" aria-label={cfg.nextLabel}>
             <p className="hero-eyebrow">{cfg.nextLabel}</p>
             <h2 className="hero-name"><EventName ev={nextEvent} className="hero-ev" /></h2>
             <p className="hero-meta">
+              {nextEvent.rank && (
+                <span className="rank" title={`World number ${nextEvent.rank}`}>
+                  #{nextEvent.rank}
+                </span>
+              )}
               <StagePill ev={nextEvent} />
               {(nextEvent.venue || nextEvent.city) && (
                 <span>{[nextEvent.venue, nextEvent.city].filter(Boolean).join(" · ")}</span>
@@ -1041,7 +1299,7 @@ export default function App() {
         </nav>
 
         {/* ---------- filters ---------- */}
-        <div className="filters">
+        <div className="filters" hidden={golfOverview}>
           <input
             className="search"
             type="search"
@@ -1052,12 +1310,33 @@ export default function App() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
+          {sport === "golf" && golfApi.enabled && golfRounds.length > 0 && (
+            <div className="chips" role="group" aria-label="Round">
+              <button
+                className={`chip${golfRound === "all" ? " is-on" : ""}`}
+                aria-pressed={golfRound === "all"}
+                onClick={() => setGolfRound("all")}
+              >
+                All rounds
+              </button>
+              {golfRounds.map((r) => (
+                <button
+                  key={r.round}
+                  className={`chip${golfRound === r.round ? " is-on" : ""}`}
+                  aria-pressed={golfRound === r.round}
+                  onClick={() => setGolfRound(r.round)}
+                >
+                  Round {r.round}
+                </button>
+              ))}
+            </div>
+          )}
           {sport === "golf" && golfApi.enabled && (
             <>
               <div className="chips" role="group" aria-label="Which players">
                 {[
                   ["mine", GOLF_PINNED.map((n) => n.split(" ").pop()).join(" & ")],
-                  ["watchlist", `Top ${GOLF_TOP10.length}`],
+                  ["watchlist", `Top ${GOLF_TOP_N}`],
                   ["field", "Whole field"],
                 ].map(([id, label]) => (
                   <button
@@ -1070,23 +1349,13 @@ export default function App() {
                   </button>
                 ))}
               </div>
-              {weekendAvailable ? (
-                <label className="toggle toggle--inline">
-                  <input
-                    type="checkbox"
-                    checked={showWeekend}
-                    onChange={(e) => setShowWeekend(e.target.checked)}
-                  />
-                  <span>
-                    Show rounds 3 and 4 — weekend tee times are ordered by score, so a
-                    late Sunday slot hints at who's in contention
-                  </span>
-                </label>
-              ) : (
-                <p className="filternote">
-                  Rounds 3 and 4 aren't drawn yet — those tee times are set after the cut.
-                </p>
-              )}
+              <p className="filternote">
+                {ranksAreLive
+                  ? <>World ranking live from OWGR{golfApi.rankingsWeek
+                      ? `, week ending ${fmtDateHeading(Date.parse(golfApi.rankingsWeek))}` : ""}.</>
+                  : <>World ranking unavailable right now — using the built-in list, which
+                      may be out of date.</>}
+              </p>
             </>
           )}
           {stages.length > 1 && (
@@ -1130,7 +1399,7 @@ export default function App() {
         </div>
 
         {/* ---------- COMING UP ---------- */}
-        {tab === "upcoming" && (
+        {tab === "upcoming" && !golfOverview && (
           <section>
             {comingUpCount === 0 && (
               <div className="empty">
@@ -1253,7 +1522,8 @@ export default function App() {
           </p>
           <p>
             <strong>Golf:</strong> PGA Tour tee times from ESPN, refreshed every ten
-            minutes. Rounds 1 and 2 are drawn before play starts; rounds 3 and 4 are
+            minutes, with world rankings from the Official World Golf Ranking (cached
+            twelve hours, since it only moves on Sundays). Rounds 1 and 2 are drawn before play starts; rounds 3 and 4 are
             ordered by score after the cut, so they sit behind an opt-in — a late Sunday
             tee time would otherwise tell you who is leading. Scores, positions and
             round totals never leave the server.
@@ -1546,6 +1816,11 @@ button { font-family:inherit; cursor:pointer }
   color:var(--muted); border:1px solid var(--line-2); border-radius:3px;
   padding:2px 7px; white-space:nowrap;
 }
+.rank {
+  font-family:var(--mono); font-size:0.62rem; font-weight:600;
+  color:var(--accent); border:1px solid var(--accent); border-radius:3px;
+  padding:2px 5px; white-space:nowrap; font-variant-numeric:tabular-nums;
+}
 .owl { font-size:0.62rem; letter-spacing:0.1em; color:var(--accent); text-transform:uppercase }
 .done { font-size:0.62rem; letter-spacing:0.1em; color:var(--dim); text-transform:uppercase }
 
@@ -1564,7 +1839,27 @@ button { font-family:inherit; cursor:pointer }
 .tourn-field { color:var(--dim); font-size:0.76rem; margin-top:4px }
 .tourn-yes { color:var(--accent-soft); font-size:0.8rem; margin-top:8px; font-weight:600 }
 .tourn-no { color:var(--muted); font-size:0.8rem; margin-top:8px; line-height:1.5 }
-.toggle--inline { margin-top:0 }
+.toggle--weekend {
+  margin:12px 0 4px; padding:11px 14px; border-radius:9px;
+  background:var(--panel); border:1px solid var(--line);
+}
+.filternote--golf { margin:12px 0 4px }
+.tourn--slim { padding:13px 16px }
+.back {
+  background:none; border:none; padding:0 0 8px; color:var(--accent-soft);
+  font-size:0.74rem; font-weight:700; letter-spacing:0.04em;
+}
+.back:hover { color:var(--text) }
+.seeall { margin-top:4px; font-size:0.76rem }
+
+/* tappable rows for the golf drill-down */
+.row--tap { cursor:pointer; position:relative; padding-right:34px }
+.row--tap:hover { border-color:var(--accent) }
+.row-go {
+  position:absolute; right:14px; top:50%; transform:translateY(-50%);
+  color:var(--faint); font-size:1.3rem; line-height:1;
+}
+.row--tap:hover .row-go { color:var(--accent) }
 
 /* ---------- live ---------- */
 .livewrap { margin-top:16px }
@@ -1620,6 +1915,7 @@ button { font-family:inherit; cursor:pointer }
 /* ---------- mobile ---------- */
 @media (max-width:560px) {
   .row { grid-template-columns:62px 1fr; row-gap:10px; padding:13px }
+  .row--tap { padding-right:30px }
   .row-hhmm { font-size:1.3rem }
   .row-clock { grid-column:2; align-items:flex-start }
   .sport { font-size:0.76rem; padding:10px 4px }
