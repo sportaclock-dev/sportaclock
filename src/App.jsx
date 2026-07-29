@@ -161,6 +161,17 @@ const SPORTS = {
       { name: "Sky Sports F1 (UK)", url: "https://www.skysports.com/watch/sky-sports-f1" },
     ],
   },
+  golf: {
+    icon: "⛳", label: "Golf",
+    eyebrow: "PGA Tour · tee times for the players you follow",
+    nextLabel: "Next off the tee", clockLabel: "to tee off",
+    durationMin: 300, // roughly a round on the course
+    stages: ["All"], // replaced at runtime by the rounds actually published
+    replays: [
+      { name: "Sky Sports Golf (UK)", url: "https://www.skysports.com/golf" },
+      { name: "PGA Tour", url: "https://www.pgatour.com" },
+    ],
+  },
   nfl: {
     icon: "🏈", label: "NFL",
     eyebrow: "NFL 2026 · 107th season · every game",
@@ -199,6 +210,61 @@ const LEAGUES = {
 /* The owner's teams sit first in the crest bar; everyone else alphabetical.
    Matched as a substring, so "Liverpool FC" and "Philadelphia Eagles" both hit. */
 const PINNED_TEAM = { pl: "Liverpool", cl: "Liverpool", nfl: "Eagles" };
+
+/* ------------------------------------------------------------
+   GOLF WATCHLIST
+   ESPN has no working golf rankings endpoint (/pga/rankings
+   500s, /golf/rankings 404s, /pga/standings comes back empty),
+   so the top 10 is maintained here by hand. It barely moves
+   week to week — edit the list and redeploy.
+
+   Your two are listed first and stay pinned to the top of each
+   day, the same way Liverpool and the Eagles do.
+   Names are matched loosely: accents are stripped and any
+   substring counts, so "Ludvig Aberg" still finds "Ludvig Åberg".
+   ------------------------------------------------------------ */
+const GOLF_PINNED = ["Rory McIlroy", "Scottie Scheffler"];
+
+const GOLF_TOP10 = [
+  "Scottie Scheffler",
+  "Rory McIlroy",
+  "Xander Schauffele",
+  "Collin Morikawa",
+  "Ludvig Aberg",
+  "Bryson DeChambeau",
+  "Justin Thomas",
+  "Hideki Matsuyama",
+  "Viktor Hovland",
+  "Patrick Cantlay",
+];
+
+const GOLF_WATCHLIST = [...new Set([...GOLF_PINNED, ...GOLF_TOP10])];
+
+// strip accents so "Åberg" and "Aberg" compare equal
+const norm = (str) =>
+  String(str || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+
+const nameMatches = (player, wanted) => norm(player).includes(norm(wanted));
+const onList = (player, list) => list.some((n) => nameMatches(player, n));
+
+/* Round 1 and 2 tee times are drawn at random — harmless.
+   Rounds 3 and 4 are ordered by score, so a late Sunday time
+   tells you someone is in contention. That's a spoiler on a
+   spoiler-free site, so the weekend stays behind an opt-in. */
+const WEEKEND_ROUNDS = [3, 4];
+
+const golfVisible = (ev, scope, showWeekend) => {
+  if (!showWeekend && WEEKEND_ROUNDS.includes(ev.round)) return false;
+  if (scope === "field") return true;
+  return onList(ev.player, scope === "mine" ? GOLF_PINNED : GOLF_WATCHLIST);
+};
+
+const ordinal = (n) => {
+  if (!n) return "";
+  const rem100 = n % 100;
+  if (rem100 >= 11 && rem100 <= 13) return `${n}th`;
+  return `${n}${{ 1: "st", 2: "nd", 3: "rd" }[n % 10] || "th"}`;
+};
 
 // football-data.org stage codes → friendly Champions League labels
 const CL_STAGE = {
@@ -403,7 +469,8 @@ function StagePill({ ev }) {
 const EventRow = React.memo(function EventRow({ ev, clockLabel, off }) {
   const owl = !off && isNightOwl(ev.kickoff);
   return (
-    <article className={`row${owl ? " row--owl" : ""}${off ? " row--off" : ""}`}>
+    <article className={`row${owl ? " row--owl" : ""}${off ? " row--off" : ""}` +
+      `${ev.mine ? " row--mine" : ""}`}>
       <div className="row-time">
         {off ? (
           // The old kickoff time no longer means anything — don't imply it does.
@@ -454,7 +521,7 @@ const EventRow = React.memo(function EventRow({ ev, clockLabel, off }) {
    Pure function, so the same code can build the list on screen
    and scan every other competition to find the soonest event.
    ============================================================ */
-function buildEvents(sport, league, football, nflApi) {
+function buildEvents(sport, league, football, nflApi, golfApi) {
   const mins = (n) => n * 60000;
 
   if (sport === "football") {
@@ -482,6 +549,31 @@ function buildEvents(sport, league, football, nflApi) {
           apiStatus: m.status || undefined,
         };
       })
+      .sort((a, b) => a.kickoff - b.kickoff);
+  }
+
+  // Golf's unit is one player's tee time on one day, which drops straight
+  // onto the same departure board as everything else.
+  if (sport === "golf") {
+    if (!golfApi || !golfApi.enabled) return [];
+    const t = golfApi.tournament || {};
+    return (golfApi.teeTimes || [])
+      .filter((x) => x.teeTime && x.player)
+      .map((x) => ({
+        id: `golf-${x.id}`,
+        t: x.teeTime,
+        kickoff: new Date(x.teeTime).getTime(),
+        durationMs: mins(SPORTS.golf.durationMin),
+        title: x.player,
+        player: x.player,
+        round: x.round,
+        venue: t.course || "",
+        city: t.city || "",
+        tag: x.round ? `Round ${x.round}` : "Tee time",
+        stage: x.round ? `Round ${x.round}` : "Tee time",
+        sub: x.startHole ? `${ordinal(x.startHole)} tee` : "",
+        mine: onList(x.player, GOLF_PINNED),
+      }))
       .sort((a, b) => a.kickoff - b.kickoff);
   }
 
@@ -515,7 +607,7 @@ function buildEvents(sport, league, football, nflApi) {
 // Every competition the auto-jump considers, in tie-break order.
 const ALL_VIEWS = [
   ["football", "pl"], ["football", "cl"], ["football", "is"],
-  ["f1", null], ["nfl", null],
+  ["f1", null], ["golf", null], ["nfl", null],
 ];
 
 /* ============================================================ */
@@ -536,7 +628,10 @@ export default function App() {
     is: { enabled: false, matches: [] },
   });
   const [nflApi, setNflApi] = useState({ enabled: false, events: [] });
-  const [loaded, setLoaded] = useState({ football: false, nfl: false });
+  const [golfApi, setGolfApi] = useState({ enabled: false, teeTimes: [], tournament: null });
+  const [golfScope, setGolfScope] = useState("watchlist"); // mine | watchlist | field
+  const [showWeekend, setShowWeekend] = useState(false);
+  const [loaded, setLoaded] = useState({ football: false, nfl: false, golf: false });
   const [autoDone, setAutoDone] = useState(false);
   const pinned = useRef(false); // set once the visitor picks something themselves
 
@@ -578,21 +673,46 @@ export default function App() {
     return () => { alive = false; clearInterval(id); };
   }, []);
 
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try {
+        const r = await fetch("/api/golf");
+        const data = await r.json();
+        if (alive && data.enabled && data.teeTimes?.length) {
+          setGolfApi({
+            enabled: true,
+            teeTimes: data.teeTimes,
+            tournament: data.tournament || null,
+          });
+        }
+      } catch { /* golf tab shows an empty state */ }
+      if (alive) setLoaded((p) => (p.golf ? p : { ...p, golf: true }));
+    };
+    load();
+    const id = setInterval(load, 10 * 60 * 1000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
+
   // Never wait on a slow feed for more than four seconds before deciding.
   useEffect(() => {
-    const id = setTimeout(() => setLoaded({ football: true, nfl: true }), 4000);
+    const id = setTimeout(
+      () => setLoaded({ football: true, nfl: true, golf: true }), 4000);
     return () => clearTimeout(id);
   }, []);
 
   /* ---- open on whatever happens next, across every sport ---- */
   useEffect(() => {
     if (autoDone || pinned.current) return;
-    if (!loaded.football || !loaded.nfl) return;
+    if (!loaded.football || !loaded.nfl || !loaded.golf) return;
 
     const now = Date.now();
     let bestLive = null, bestNext = null;
     for (const [s, l] of ALL_VIEWS) {
-      for (const ev of buildEvents(s, l, football, nflApi)) {
+      for (const ev of buildEvents(s, l, football, nflApi, golfApi)) {
+        // Golf would otherwise always win — 147 players tee off every
+        // Thursday. Only the watchlist counts, and never the weekend.
+        if (s === "golf" && !golfVisible(ev, "watchlist", false)) continue;
         const kind = classify(ev, now);
         if (kind === "live" && (!bestLive || ev.kickoff < bestLive.ev.kickoff)) {
           bestLive = { s, l, ev };
@@ -615,29 +735,46 @@ export default function App() {
       setStage("All");
     }
     setJumped(pick.ev.home ? `${pick.ev.home} vs ${pick.ev.away}` : pick.ev.title);
-  }, [loaded, football, nflApi, autoDone, sport, league]);
+  }, [loaded, football, nflApi, golfApi, autoDone, sport, league]);
 
   const cfg = SPORTS[sport];
   const leagueCfg = sport === "football" ? LEAGUES[league] : null;
-  const stages = leagueCfg ? leagueCfg.stages : cfg.stages;
+  const golfTourn = golfApi.tournament;
+  const stages = useMemo(() => {
+    if (sport !== "golf") return leagueCfg ? leagueCfg.stages : cfg.stages;
+    const published = (golfTourn?.roundsPublished || [])
+      .filter((r) => showWeekend || !WEEKEND_ROUNDS.includes(r));
+    return published.length > 1 ? ["All", ...published.map((r) => `Round ${r}`)] : ["All"];
+  }, [sport, leagueCfg, cfg, golfTourn, showWeekend]);
+
+  // which of your two are actually in this week's field
+  const golfPinnedIn = useMemo(() => {
+    if (sport !== "golf" || !golfApi.enabled) return [];
+    return GOLF_PINNED.filter((n) =>
+      golfApi.teeTimes.some((t) => nameMatches(t.player, n)));
+  }, [sport, golfApi]);
+
+  const weekendAvailable = (golfTourn?.roundsPublished || [])
+    .some((r) => WEEKEND_ROUNDS.includes(r));
   const eyebrow = leagueCfg ? leagueCfg.eyebrow : cfg.eyebrow;
   const tz = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone, []);
 
   const events = useMemo(
-    () => buildEvents(sport, league, football, nflApi),
-    [sport, league, football, nflApi],
+    () => buildEvents(sport, league, football, nflApi, golfApi),
+    [sport, league, football, nflApi, golfApi],
   );
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return events.filter((ev) => {
+      if (sport === "golf" && !golfVisible(ev, golfScope, showWeekend)) return false;
       if (stage !== "All" && ev.stage !== stage) return false;
       if (teamFilter && ev.home !== teamFilter && ev.away !== teamFilter) return false;
       if (!q) return true;
-      return [ev.home, ev.away, ev.title, ev.sub, ev.venue, ev.city]
+      return [ev.home, ev.away, ev.title, ev.player, ev.sub, ev.venue, ev.city]
         .filter(Boolean).join(" ").toLowerCase().includes(q);
     });
-  }, [events, query, stage, teamFilter]);
+  }, [events, query, stage, teamFilter, sport, golfScope, showWeekend]);
 
   /* ---- re-bucket exactly when something starts or ends, not every second ---- */
   const [boundary, setBoundary] = useState(() => Date.now());
@@ -710,7 +847,10 @@ export default function App() {
     ? (LEAGUE_REPLAYS[league] || [])
     : (cfg.replays || []);
 
-  const clearFilters = () => { setStage("All"); setQuery(""); setTeamFilter(null); };
+  const clearFilters = () => {
+    setStage("All"); setQuery(""); setTeamFilter(null);
+    setGolfScope("watchlist");
+  };
   const switchSport = (s) => { pinned.current = true; setJumped(null); setSport(s); clearFilters(); };
   const switchLeague = (l) => { pinned.current = true; setJumped(null); setLeague(l); clearFilters(); };
 
@@ -718,14 +858,16 @@ export default function App() {
     const matchup = ev.home ? `${ev.home} vs ${ev.away}` : ev.title;
     const context = sport === "football"
       ? (league === "pl" ? "premier league" : league === "cl" ? "champions league" : "besta deildin")
-      : sport === "nfl" ? "NFL 2026" : "F1 2026";
+      : sport === "nfl" ? "NFL 2026"
+      : sport === "golf" ? `${golfTourn?.name || "PGA Tour"} 2026` : "F1 2026";
     return `https://www.youtube.com/results?search_query=${
       encodeURIComponent(`${matchup} ${context} highlights`)}`;
   };
 
   const feedLive = sport === "football"
     ? !!football[league]?.enabled
-    : sport === "nfl" ? nflApi.enabled : false;
+    : sport === "nfl" ? nflApi.enabled
+    : sport === "golf" ? golfApi.enabled : false;
 
   return (
     <div className={`page theme-${THEME}`}>
@@ -784,6 +926,47 @@ export default function App() {
           <p className="jumped">
             Opened on the next event anywhere on the site — <strong>{jumped}</strong>.
           </p>
+        )}
+
+        {/* ---------- golf: which tournament is on ---------- */}
+        {sport === "golf" && golfTourn && (
+          <section className="tourn" aria-label="Tournament">
+            <p className="tourn-eyebrow">
+              {golfTourn.state === "in"
+                ? `On the course now${golfTourn.currentRound ? ` · Round ${golfTourn.currentRound}` : ""}`
+                : golfTourn.state === "post" ? "Finished"
+                : golfTourn.detail || "Starts soon"}
+            </p>
+            <h2 className="tourn-name">{golfTourn.name}</h2>
+            {(golfTourn.course || golfTourn.city) && (
+              <p className="tourn-where">
+                {[golfTourn.course, golfTourn.city].filter(Boolean).join(" · ")}
+              </p>
+            )}
+            <p className="tourn-field">
+              {golfTourn.fieldSize} in the field
+              {golfTourn.roundsPublished?.length > 0 && (
+                <> · tee times out for round{golfTourn.roundsPublished.length > 1 ? "s" : ""}{" "}
+                  {golfTourn.roundsPublished.join(" and ")}</>
+              )}
+            </p>
+            {golfPinnedIn.length === GOLF_PINNED.length ? (
+              <p className="tourn-yes">
+                Both {GOLF_PINNED.map((n) => n.split(" ").pop()).join(" and ")} are playing.
+              </p>
+            ) : golfPinnedIn.length > 0 ? (
+              <p className="tourn-yes">
+                {golfPinnedIn.map((n) => n.split(" ").pop()).join(" and ")} is playing.{" "}
+                {GOLF_PINNED.filter((n) => !golfPinnedIn.includes(n))
+                  .map((n) => n.split(" ").pop()).join(" and ")} is not.
+              </p>
+            ) : (
+              <p className="tourn-no">
+                Neither {GOLF_PINNED.map((n) => n.split(" ").pop()).join(" nor ")} is in
+                this field — showing the rest of your watchlist instead.
+              </p>
+            )}
+          </section>
         )}
 
         {/* ---------- hero: the next event ---------- */}
@@ -869,6 +1052,43 @@ export default function App() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
+          {sport === "golf" && golfApi.enabled && (
+            <>
+              <div className="chips" role="group" aria-label="Which players">
+                {[
+                  ["mine", GOLF_PINNED.map((n) => n.split(" ").pop()).join(" & ")],
+                  ["watchlist", `Top ${GOLF_TOP10.length}`],
+                  ["field", "Whole field"],
+                ].map(([id, label]) => (
+                  <button
+                    key={id}
+                    className={`chip${golfScope === id ? " is-on" : ""}`}
+                    aria-pressed={golfScope === id}
+                    onClick={() => setGolfScope(id)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {weekendAvailable ? (
+                <label className="toggle toggle--inline">
+                  <input
+                    type="checkbox"
+                    checked={showWeekend}
+                    onChange={(e) => setShowWeekend(e.target.checked)}
+                  />
+                  <span>
+                    Show rounds 3 and 4 — weekend tee times are ordered by score, so a
+                    late Sunday slot hints at who's in contention
+                  </span>
+                </label>
+              ) : (
+                <p className="filternote">
+                  Rounds 3 and 4 aren't drawn yet — those tee times are set after the cut.
+                </p>
+              )}
+            </>
+          )}
           {stages.length > 1 && (
             <div className="chips" role="group" aria-label="Stage">
               {stages.map((s) => (
@@ -916,6 +1136,10 @@ export default function App() {
               <div className="empty">
                 {sport === "football" && !football[league]?.enabled
                   ? "No fixtures yet. This league's schedule loads live and appears here as soon as the dates are published."
+                  : sport === "golf" && !golfApi.enabled
+                  ? "No tee times right now. ESPN publishes them a day or two before each tournament, so this fills in during tournament week."
+                  : sport === "golf" && golfScope === "mine"
+                  ? "Neither of your two is in this field. Try the top 10 or the whole field."
                   : "Nothing matches that filter."}
                 {(query || teamFilter || stage !== "All") && (
                   <>
@@ -1026,6 +1250,13 @@ export default function App() {
             <strong>F1:</strong> the 2026 FIA calendar with every session — practice, sprint
             qualifying, sprint, qualifying and race. Session times for later rounds follow the
             standard weekend format and are provisional until confirmed.
+          </p>
+          <p>
+            <strong>Golf:</strong> PGA Tour tee times from ESPN, refreshed every ten
+            minutes. Rounds 1 and 2 are drawn before play starts; rounds 3 and 4 are
+            ordered by score after the cut, so they sit behind an opt-in — a late Sunday
+            tee time would otherwise tell you who is leading. Scores, positions and
+            round totals never leave the server.
           </p>
           <p>
             <strong>NFL:</strong> the full 272-game schedule loads from ESPN through our own
@@ -1271,6 +1502,10 @@ button { font-family:inherit; cursor:pointer }
 .row--off { opacity:0.66 }
 .row--live { border-color:var(--live); border-left-color:var(--live) }
 .row--done { border-left-color:var(--line-2) }
+/* one of your players — golf tee sheets stay chronological, so the rail
+   is how you spot them rather than reordering the board */
+.row--mine { border-left-color:var(--accent) }
+.row--mine .ev-name { color:var(--text) }
 
 .row-time { text-align:left }
 .row-hhmm {
@@ -1313,6 +1548,23 @@ button { font-family:inherit; cursor:pointer }
 }
 .owl { font-size:0.62rem; letter-spacing:0.1em; color:var(--accent); text-transform:uppercase }
 .done { font-size:0.62rem; letter-spacing:0.1em; color:var(--dim); text-transform:uppercase }
+
+/* ---------- golf tournament banner ---------- */
+.tourn {
+  margin-top:16px; padding:16px 18px;
+  background:var(--panel-2); border:1px solid var(--line);
+  border-left:3px solid var(--accent); border-radius:9px;
+}
+.tourn-eyebrow {
+  font-size:0.64rem; letter-spacing:0.2em; text-transform:uppercase;
+  color:var(--accent-soft); font-weight:700; margin-bottom:6px;
+}
+.tourn-name { margin:0 0 4px; font-size:1.15rem; font-weight:700 }
+.tourn-where { color:var(--muted); font-size:0.84rem }
+.tourn-field { color:var(--dim); font-size:0.76rem; margin-top:4px }
+.tourn-yes { color:var(--accent-soft); font-size:0.8rem; margin-top:8px; font-weight:600 }
+.tourn-no { color:var(--muted); font-size:0.8rem; margin-top:8px; line-height:1.5 }
+.toggle--inline { margin-top:0 }
 
 /* ---------- live ---------- */
 .livewrap { margin-top:16px }
