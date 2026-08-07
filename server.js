@@ -131,6 +131,17 @@ function tsdbEventToMatch(ev) {
   };
 }
 
+/* The critical distinction. tsdbEvents throws on a bad response, and the
+   round sweep used to swallow that with a bare catch — so a rate-limited
+   request looked exactly like a round with no games in it. */
+async function tsdbTry(pathAndQuery) {
+  try {
+    return { ok: true, events: await tsdbEvents(pathAndQuery) };
+  } catch (e) {
+    return { ok: false, events: [], error: e.message };
+  }
+}
+
 async function tsdbEvents(pathAndQuery) {
   const r = await fetch(`${TSDB}/${pathAndQuery}`);
   if (!r.ok) throw new Error(`TheSportsDB responded ${r.status}`);
@@ -158,22 +169,54 @@ async function resolveIcelandLeagueId() {
 
 async function fetchIcelandSeason(leagueId, year) {
   const byId = new Map(); // idEvent (string) → raw event
+  const log = (m) => console.log(`[iceland] ${m}`);
+  const inSeason = (ev) =>
+    ev.strSeason === String(year) || String(ev.dateEvent || "").slice(0, 4) === String(year);
 
-  // Pass 1: rounds. Each returns at most 5 of its 6 games (free-tier cap).
-  let emptyStreak = 0;
-  for (let round = 1; round <= 40 && emptyStreak < 3; round++) {
-    let evs = [];
-    try {
-      evs = await tsdbEvents(`eventsround.php?id=${leagueId}&r=${round}&s=${year}`);
-    } catch { /* treat a failed round like an empty one */ }
-    if (!evs.length) { emptyStreak++; }
-    else { emptyStreak = 0; evs.forEach((ev) => byId.set(ev.idEvent, ev)); }
+  /* Pass 0: the cheap, high-value calls FIRST. Two requests buy the next 15
+     and last 15 fixtures — which is exactly what the Coming up tab needs.
+     Running these before the round sweep means that if the free tier starts
+     throttling partway through, we've already banked the upcoming games. */
+  for (const q of [
+    `eventsnextleague.php?id=${leagueId}`,
+    `eventspastleague.php?id=${leagueId}`,
+  ]) {
+    const r = await tsdbTry(q);
+    if (!r.ok) log(`${q.split(".php")[0]} failed: ${r.error}`);
+    r.events.forEach((ev) => { if (inSeason(ev)) byId.set(ev.idEvent, ev); });
     await sleep(TSDB_DELAY_MS);
   }
+  log(`near-term pass: ${byId.size} fixtures`);
 
-  // Pass 2: gap-fill. IDs come in sequential per-round blocks, so any
-  // missing ID between min and max is a game the 5-cap hid from us.
-  // The single-event lookup endpoint is not capped.
+  /* Pass 1: rounds, for full-season coverage. Each returns at most 5 of its
+     6 games (free-tier cap).
+
+     A FAILED request is not an empty round. Treating them alike is what froze
+     this league on matchday 3: once TheSportsDB began throttling, three
+     throttled calls in a row looked like three empty rounds and the sweep
+     gave up — and because rounds 1-3 were the whole season back in April,
+     nothing looked wrong until the season moved on. */
+  let emptyStreak = 0, failures = 0, retried = 0;
+  for (let round = 1; round <= 40 && emptyStreak < 6; round++) {
+    const r = await tsdbTry(`eventsround.php?id=${leagueId}&r=${round}&s=${year}`);
+
+    if (!r.ok) {
+      failures++;
+      if (failures > 10) { log(`round sweep abandoned after ${failures} failures`); break; }
+      await sleep(TSDB_DELAY_MS * 4); // back off and try this same round again
+      if (retried++ < 20) round--;    // bounded, so a dead API can't spin
+      continue;
+    }
+
+    if (!r.events.length) emptyStreak++;
+    else { emptyStreak = 0; r.events.forEach((ev) => byId.set(ev.idEvent, ev)); }
+    await sleep(TSDB_DELAY_MS);
+  }
+  log(`after round sweep: ${byId.size} fixtures (${failures} failed requests)`);
+
+  /* Pass 2: gap-fill. IDs come in sequential per-round blocks, so any missing
+     ID between min and max is a game the 5-cap hid from us. The single-event
+     lookup endpoint is not capped. */
   const ids = [...byId.keys()].map(Number).filter(Number.isFinite);
   if (ids.length) {
     const min = Math.min(...ids), max = Math.max(...ids);
@@ -184,39 +227,30 @@ async function fetchIcelandSeason(leagueId, year) {
     // If IDs aren't actually contiguous (e.g. after a re-import), the gap
     // list explodes — skip the hack rather than hammer their API.
     if (missing.length && missing.length <= 60) {
+      let filled = 0;
       for (const id of missing) {
-        try {
-          const evs = await tsdbEvents(`lookupevent.php?id=${id}`);
-          const ev = evs[0];
-          // Only accept events that really belong to this league + season.
-          if (ev && ev.idLeague === String(leagueId) && ev.strSeason === String(year)) {
-            byId.set(ev.idEvent, ev);
-          }
-        } catch { /* a missed fill just means one absent fixture */ }
+        const r = await tsdbTry(`lookupevent.php?id=${id}`);
+        const ev = r.events[0];
+        if (ev && ev.idLeague === String(leagueId) && ev.strSeason === String(year)) {
+          byId.set(ev.idEvent, ev);
+          filled++;
+        }
         await sleep(TSDB_DELAY_MS);
       }
+      log(`gap-fill: recovered ${filled} of ${missing.length} missing ids`);
+    } else if (missing.length) {
+      log(`gap-fill skipped: ${missing.length} ids missing, too many to be real`);
     }
   }
 
-  // Pass 3: near-term safety net. Catches reschedules/additions whose new
-  // IDs fall outside the block range. Also serves as the sole source if
-  // the round endpoint returned nothing at all.
-  for (const q of [
-    `eventsnextleague.php?id=${leagueId}`,
-    `eventspastleague.php?id=${leagueId}`,
-  ]) {
-    try {
-      (await tsdbEvents(q)).forEach((ev) => {
-        if (ev.strSeason === String(year) || !byId.size) byId.set(ev.idEvent, ev);
-      });
-    } catch { /* optional pass */ }
-    await sleep(TSDB_DELAY_MS);
-  }
-
-  return [...byId.values()]
+  const out = [...byId.values()]
     .filter((ev) => !/cancel/i.test(ev.strStatus || ""))
     .map(tsdbEventToMatch)
     .filter((m) => m.home && m.away);
+
+  const ahead = out.filter((m) => new Date(m.utcDate).getTime() > Date.now()).length;
+  log(`season ${year}: ${out.length} fixtures, ${ahead} still to come`);
+  return out;
 }
 
 async function refreshIceland() {

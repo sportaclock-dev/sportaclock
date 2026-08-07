@@ -52,15 +52,23 @@ let cache = { at: 0, payload: null };
    no competitors ("field:none"), because ESPN only publishes a field during
    tournament week, which is exactly the behaviour we want to show. */
 const SCHEDULE_COUNT = 6; // the current one plus the next five
-const SCHEDULE_CACHE_MS = 6 * 60 * 60 * 1000;
-let schedCache = { at: 0, list: null };
+/* The calendar and the per-tournament venues barely change, so they're cached
+   hard and the ten-minute cycle re-fetches only the ACTIVE tournament. That
+   takes ESPN from roughly 42 requests an hour down to about 8 — worth doing
+   in its own right, and less likely to attract a 403. */
+const SCHEDULE_CACHE_MS = 3 * 60 * 60 * 1000;
+let schedCache = { at: 0, data: null };
 
 const OWGR = "https://apiweb.owgr.com/api/owgr";
 const RANK_CACHE_MS = 12 * 60 * 60 * 1000;
 const RANK_COUNT = 30; // a few spare beyond the top 10 we display
 let rankCache = { at: 0, payload: null };
 
-const HEADERS = {
+/* OWGR only. Deliberately NOT sent to ESPN: nfl.js calls ESPN with a plain
+   fetch and works, while golf.js started 403ing after these were added.
+   Claiming to be Chrome from a datacentre IP, with none of the other signals
+   a real browser sends, is a well-known way to get flagged. */
+const OWGR_HEADERS = {
   "User-Agent":
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
     "(KHTML, like Gecko) Chrome/126.0 Safari/537.36",
@@ -83,7 +91,7 @@ async function fetchRankings() {
   }
   const url = `${OWGR}/rankings/getRankings` +
     `?regionId=0&pageSize=${RANK_COUNT}&pageNumber=1&countryId=0&sortString=Rank+ASC`;
-  const r = await fetch(url, { headers: HEADERS });
+  const r = await fetch(url, { headers: OWGR_HEADERS });
   if (!r.ok) throw new Error(`OWGR responded ${r.status}`);
   const data = await r.json();
 
@@ -296,39 +304,99 @@ function placeOf(ev, detail, comp) {
   };
 }
 
-/* The season calendar, trimmed to what's still to come. */
-async function fetchSchedule() {
-  if (schedCache.list && Date.now() - schedCache.at < SCHEDULE_CACHE_MS) {
-    return schedCache.list;
-  }
-  const yr = new Date().getFullYear();
-  const r = await fetch(`${BASE}/pga/scoreboard?dates=${yr}`, { headers: HEADERS });
+/* Normalise ESPN's event objects. Note `date` / `endDate` — NOT startDate. */
+function mapEvents(events) {
+  return (Array.isArray(events) ? events : []).map((e) => ({
+    id: String(e.id),
+    name: e.name || e.shortName || "PGA Tour event",
+    start: iso(e.date),
+    end: iso(e.endDate) || iso(e.date),
+    state: (e.status && e.status.type && e.status.type.state) || "pre",
+    detail: (e.status && e.status.type && e.status.type.detail) || "",
+  })).filter((e) => e.start);
+}
+
+const stillRelevant = (e) => Date.parse(e.end) >= Date.now() - 12 * 3600000;
+
+async function scheduleForYear(yr) {
+  const r = await fetch(`${BASE}/pga/scoreboard?dates=${yr}`);
   if (!r.ok) throw new Error(`ESPN schedule responded ${r.status}`);
   const data = await r.json();
-  const all = Array.isArray(data.events) ? data.events : [];
+  return mapEvents(data.events).filter(stillRelevant);
+}
 
-  const now = Date.now();
-  const list = all
-    .map((e) => ({
-      id: String(e.id),
-      name: e.name || e.shortName || "PGA Tour event",
-      start: iso(e.date),
-      end: iso(e.endDate) || iso(e.date),
-      state: (e.status && e.status.type && e.status.type.state) || "pre",
-      detail: (e.status && e.status.type && e.status.type.detail) || "",
-    }))
-    .filter((e) => e.start && Date.parse(e.end) >= now - 12 * 3600000)
+/* The undated scoreboard still returns the current tournament. Worth far more
+   than an empty tab if the season query fails or comes back bare. */
+async function currentOnly() {
+  const r = await fetch(`${BASE}/pga/scoreboard`);
+  if (!r.ok) throw new Error(`ESPN scoreboard responded ${r.status}`);
+  const data = await r.json();
+  return mapEvents(data.events);
+}
+
+/* The season calendar, trimmed to what's still to come.
+
+   Three sources, tried in order, because any one of them failing used to
+   blank the whole golf tab:
+     1. this calendar year
+     2. next calendar year — in December this year's events are all history
+     3. the plain scoreboard, which at least knows about today
+   Only if all three come back empty do we give up. */
+async function fetchSchedule() {
+  if (schedCache.data && Date.now() - schedCache.at < SCHEDULE_CACHE_MS) {
+    return schedCache.data;
+  }
+  const yr = new Date().getFullYear();
+  const attempts = [
+    () => scheduleForYear(yr),
+    () => scheduleForYear(yr + 1),
+    () => currentOnly(),
+  ];
+
+  let list = [];
+  const problems = [];
+  for (const attempt of attempts) {
+    try {
+      list = await attempt();
+      if (list.length) break;
+    } catch (e) { problems.push(e.message); }
+  }
+  if (!list.length) {
+    throw new Error(
+      problems.length
+        ? `no calendar (${problems.join("; ")})`
+        : "no upcoming tournaments in the calendar",
+    );
+  }
+
+  list = list
     .sort((a, b) => Date.parse(a.start) - Date.parse(b.start))
     .slice(0, SCHEDULE_COUNT);
 
-  if (!list.length) throw new Error("no upcoming tournaments in the calendar");
-  schedCache = { at: Date.now(), list };
-  return list;
+  // One pass for venues and field sizes; both are stable for hours.
+  const details = await Promise.all(list.map((e) => fetchDetail(e.id).catch(() => null)));
+  const enriched = list.map((e, i) => {
+    const lb = details[i];
+    const detail = (lb && lb.events && lb.events[0]) || lb || {};
+    const comp = (detail.competitions && detail.competitions[0]) || {};
+    const field = Array.isArray(comp.competitors) ? comp.competitors : [];
+    return { ...e, place: placeOf(detail, detail, comp), fieldSize: field.length };
+  });
+
+  const active =
+    enriched.find((e) => e.state === "in" && e.fieldSize > 0) ||
+    enriched.find((e) => e.fieldSize > 0) ||
+    enriched[0];
+
+  const data = { list: enriched, activeId: active.id };
+  schedCache = { at: Date.now(), data };
+  console.log(`[/api/golf] calendar: ${enriched.length} tournaments, active = ${active.name}`);
+  return data;
 }
 
 /* The leaderboard endpoint is the only place courses and competitors live. */
 async function fetchDetail(id) {
-  const r = await fetch(`${BASE}/leaderboard?event=${id}`, { headers: HEADERS });
+  const r = await fetch(`${BASE}/leaderboard?event=${id}`);
   if (!r.ok) throw new Error(`leaderboard ${id} responded ${r.status}`);
   return r.json();
 }
@@ -339,34 +407,23 @@ export default async function golfRoute(req, res) {
       return res.json(cache.payload);
     }
 
-    const schedule = await fetchSchedule();
+    const { list, activeId } = await fetchSchedule();
+    const active = list.find((e) => e.id === activeId) || list[0];
 
-    /* Pull details for all of them at once. Failures are per-tournament: a
-       row simply loses its course rather than taking the route down. */
-    const details = await Promise.all(
-      schedule.map((e) => fetchDetail(e.id).catch(() => null)),
-    );
-
-    const enriched = schedule.map((e, i) => {
-      const lb = details[i];
-      const detail = (lb && lb.events && lb.events[0]) || lb || {};
-      const comp = (detail.competitions && detail.competitions[0]) || {};
-      const field = Array.isArray(comp.competitors) ? comp.competitors : [];
-      const place = placeOf(detail, detail, comp);
-      return { ...e, place, field, comp, fieldSize: field.length };
+    // The only per-cycle ESPN call. Everything else came from the 3h cache.
+    const lb = await fetchDetail(active.id).catch((e) => {
+      console.error("[/api/golf] leaderboard unavailable:", e.message);
+      return null;
     });
-
-    // The one to show tee times for: in progress if any, else the next with a
-    // published field, else simply the next.
-    const active =
-      enriched.find((e) => e.state === "in" && e.fieldSize > 0) ||
-      enriched.find((e) => e.fieldSize > 0) ||
-      enriched[0];
-
-    const currentRound = num(active.comp.status && active.comp.status.period) || null;
+    const detail = (lb && lb.events && lb.events[0]) || lb || {};
+    const comp = (detail.competitions && detail.competitions[0]) || {};
+    const field = Array.isArray(comp.competitors) ? comp.competitors : [];
+    const currentRound = num(comp.status && comp.status.period) || null;
+    // a fresher venue if this call gave us one, else the cached one
+    const place = field.length ? placeOf(detail, detail, comp) : active.place;
 
     const teeTimes = [];
-    for (const c of active.field) {
+    for (const c of field) {
       const name = playerName(c);
       if (!name) continue;
       for (const t of teesForPlayer(c, currentRound)) {
@@ -405,17 +462,16 @@ export default async function golfRoute(req, res) {
         start: active.start,
         end: active.end,
         currentRound,
-        course: active.place.course,
-        city: active.place.city,
-        region: active.place.region,
-        country: active.place.country,
-        continent: active.place.continent,
-        where: active.place.where,
-        fieldSize: active.fieldSize,
+        course: place.course,
+        city: place.city,
+        region: place.region,
+        country: place.country,
+        continent: place.continent,
+        where: place.where,
+        fieldSize: field.length || active.fieldSize,
         roundsPublished: rounds,
       },
-      // everything still to come, including the active one
-      schedule: enriched.map((e) => ({
+      schedule: list.map((e) => ({
         id: e.id,
         name: e.name,
         start: e.start,

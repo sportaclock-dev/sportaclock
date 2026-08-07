@@ -188,6 +188,24 @@ object as the round score. So `golf.js` **whitelists** the three fields it
 forwards — `period`, `teeTime`, `startHole` — rather than deleting the bad ones.
 Any field ESPN adds later is dropped by default instead of leaking.
 
+### Two failures worth remembering
+
+**A throttled request is not an empty result.** The round sweep caught errors
+with a bare `catch` and counted them as "this round has no games". Once
+TheSportsDB's free tier began throttling, three throttled calls in a row looked
+like three empty rounds and the sweep gave up — freezing the league on
+matchday 3. It went unnoticed for months because in April rounds 1–3 *were* the
+whole season. `tsdbTry()` now separates the two, backs off and retries, and the
+cheap `eventsnextleague` call runs **first** so upcoming fixtures are banked
+before any rate limit can bite.
+
+**Don't pretend to be a browser from a datacentre.** `golf.js` sent a spoofed
+Chrome `User-Agent` to ESPN (added for OWGR, then applied to everything) and
+started getting 403s, while `nfl.js` — a plain `fetch`, no headers — kept
+working. Those headers are now scoped to OWGR alone. The ESPN request volume
+also dropped from ~42/hour to ~8 by caching venues alongside the calendar and
+re-fetching only the active tournament each cycle.
+
 ### Notes on the Iceland feed
 
 TheSportsDB's free tier silently caps every event-list endpoint at 5 results,
