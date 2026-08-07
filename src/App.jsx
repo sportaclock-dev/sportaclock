@@ -1006,6 +1006,12 @@ export default function App() {
     ? (LEAGUE_REPLAYS[league] || [])
     : (cfg.replays || []);
 
+  /* Whether the visitor has actually narrowed anything. Without this the empty
+     state blamed a filter that wasn't set — which is what "Nothing matches
+     that filter" was doing on a league with no upcoming fixtures. */
+  const filtersActive = Boolean(query.trim()) || Boolean(teamFilter)
+    || stage !== "All" || (sport === "golf" && golfScope !== "watchlist");
+
   const clearFilters = () => {
     setStage("All"); setQuery(""); setTeamFilter(null);
     setGolfScope("watchlist");
@@ -1468,14 +1474,17 @@ export default function App() {
           <section>
             {comingUpCount === 0 && (
               <div className="empty">
-                {sport === "football" && !football[league]?.enabled
-                  ? "No fixtures yet. This league's schedule loads live and appears here as soon as the dates are published."
-                  : sport === "golf" && !golfApi.enabled
-                  ? "No tee times right now. ESPN publishes them a day or two before each tournament, so this fills in during tournament week."
-                  : sport === "golf" && golfScope === "mine"
-                  ? "Neither of your two is in this field. Try the top 10 or the whole field."
-                  : "Nothing matches that filter."}
-                {(query || teamFilter || stage !== "All") && (
+                {filtersActive
+                  ? (sport === "golf" && golfScope === "mine"
+                    ? "Neither of your two is in this field. Try the top 10 or the whole field."
+                    : "Nothing matches that filter.")
+                  : sport === "football" && !football[league]?.enabled
+                  ? "This league's schedule hasn't loaded. It appears here as soon as the feed responds."
+                  : events.length > 0
+                  // the feed worked; there simply is nothing still to come
+                  ? `Every ${sport === "football" ? "fixture" : "event"} we have for this competition has already been played. The schedule fills back in when the next round is published — until then, Catch up has them.`
+                  : "Nothing scheduled here yet. This fills in as soon as the fixtures are published."}
+                {filtersActive && (
                   <>
                     {" "}
                     <button className="link" onClick={clearFilters}>Clear filters</button>
