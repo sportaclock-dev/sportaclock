@@ -769,10 +769,13 @@ export default function App() {
       try {
         const r = await fetch("/api/golf");
         const data = await r.json();
-        if (alive && data.enabled && data.teeTimes?.length) {
+        // Between tournaments there are no tee times yet, but the payload still
+        // carries the next tournament, its venue and the rest of the season.
+        // Requiring teeTimes here used to blank the whole tab for days.
+        if (alive && data.enabled) {
           setGolfApi({
             enabled: true,
-            teeTimes: data.teeTimes,
+            teeTimes: data.teeTimes || [],
             tournament: data.tournament || null,
             rankings: data.rankings || [],
             rankingsWeek: data.rankingsWeek || null,
@@ -859,6 +862,7 @@ export default function App() {
       golfApi.teeTimes.some((t) => samePlayer(t.player, n)));
   }, [sport, golfApi]);
 
+  const fieldPublished = (golfTourn?.fieldSize || 0) > 0;
   const weekendAvailable = (golfTourn?.roundsPublished || [])
     .some((r) => WEEKEND_ROUNDS.includes(r));
   const eyebrow = leagueCfg ? leagueCfg.eyebrow : cfg.eyebrow;
@@ -1109,14 +1113,32 @@ export default function App() {
             {golfTourn.where && <p className="tourn-where">{golfTourn.where}</p>}
             {golfRound === null && (
               <>
-                <p className="tourn-field">
-                  {golfTourn.fieldSize} in the field
-                  {golfTourn.roundsPublished?.length > 0 && (
-                    <> · tee times out for round{golfTourn.roundsPublished.length > 1 ? "s" : ""}{" "}
-                      {golfTourn.roundsPublished.join(" and ")}</>
-                  )}
-                </p>
-                {golfPinnedIn.length === GOLF_PINNED.length ? (
+                {fieldPublished ? (
+                  <p className="tourn-field">
+                    {golfTourn.fieldSize} in the field
+                    {golfTourn.roundsPublished?.length > 0 && (
+                      <> · tee times out for round{golfTourn.roundsPublished.length > 1 ? "s" : ""}{" "}
+                        {golfTourn.roundsPublished.join(" and ")}</>
+                    )}
+                  </p>
+                ) : (
+                  <div className="tourn-wait">
+                    <div>
+                      <p className="tourn-field">
+                        The field is announced a few days before play, and tee times
+                        appear here as soon as it is.
+                      </p>
+                    </div>
+                    {golfTourn.start && (
+                      <div className="row-clock">
+                        <Countdown to={Date.parse(golfTourn.start)} />
+                        <span className="row-clock-label">to first round</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {!fieldPublished ? null
+                  : golfPinnedIn.length === GOLF_PINNED.length ? (
                   <p className="tourn-yes">
                     Both {GOLF_PINNED.map((n) => n.split(" ").pop()).join(" and ")} are playing.
                   </p>
@@ -1139,7 +1161,7 @@ export default function App() {
 
         {/* The weekend shield belongs here, not in the filters — it decides which
             rounds exist at all, so it has to be reachable from the overview. */}
-        {sport === "golf" && golfApi.enabled && (
+        {sport === "golf" && golfApi.enabled && golfRounds.length > 0 && (
           weekendAvailable ? (
             <label className="toggle toggle--weekend">
               <input
@@ -1162,11 +1184,10 @@ export default function App() {
         {/* ---------- golf overview: a row per round, tap to open ---------- */}
         {sport === "golf" && golfRound === null && tab === "upcoming" && (
           <section aria-label="Rounds">
-            {golfRounds.length === 0 && (
+            {golfRounds.length === 0 && !golfTourn && (
               <div className="empty">
-                {golfApi.enabled
-                  ? "Tee times for this tournament aren't drawn yet."
-                  : "No tee times right now. ESPN publishes them a day or two before each tournament, so this fills in during tournament week."}
+                No tournaments on the calendar right now — the tab fills back in
+                when the tour returns.
               </div>
             )}
             {golfRounds.map((r) => (
@@ -1246,7 +1267,7 @@ export default function App() {
                     <div className="row-main">
                       <span className="ev-name">{t.name}</span>
                       {t.course && <div className="row-where">{t.course}</div>}
-                      {t.where && <div className="row-sub">{t.where}</div>}
+                      {t.where && <div className="row-place">{t.where}</div>}
                       {!t.course && !t.where && (
                         <div className="row-sub">Venue confirmed nearer the week</div>
                       )}
@@ -1840,6 +1861,8 @@ button { font-family:inherit; cursor:pointer }
 .row-meta { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:4px }
 .row-where { color:var(--muted); font-size:0.82rem; margin-top:3px }
 .row-sub { color:var(--accent-soft); font-size:0.8rem; margin-top:3px }
+/* a place name is context, not a highlight — quieter than the course above it */
+.row-place { color:var(--dim); font-size:0.78rem; margin-top:2px }
 .ev-name { font-weight:700; font-size:0.98rem }
 .ev-vs { color:var(--faint); font-weight:500 }
 
@@ -1888,6 +1911,11 @@ button { font-family:inherit; cursor:pointer }
 .tourn-field { color:var(--dim); font-size:0.76rem; margin-top:4px }
 .tourn-yes { color:var(--accent-soft); font-size:0.8rem; margin-top:8px; font-weight:600 }
 .tourn-no { color:var(--muted); font-size:0.8rem; margin-top:8px; line-height:1.5 }
+.tourn-wait {
+  display:flex; gap:16px; align-items:center; justify-content:space-between;
+  flex-wrap:wrap; margin-top:6px;
+}
+.tourn-wait .row-clock { align-items:flex-end }
 .toggle--weekend {
   margin:12px 0 4px; padding:11px 14px; border-radius:9px;
   background:var(--panel); border:1px solid var(--line);
