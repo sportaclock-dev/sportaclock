@@ -159,6 +159,19 @@ Dubai · United Arab Emirates · Asia
 If ESPN gives no address, the course name shows alone and no location is
 invented.
 
+#### Between tournaments
+
+For a few days after one tournament ends and before the next field is
+published, `/api/golf` returns a tournament, a venue and the full schedule but
+**zero tee times**. The client must not treat that as "no golf" — an earlier
+version gated on `data.teeTimes?.length` and blanked the entire tab, schedule
+included, until the next field appeared. It now gates on `enabled` alone and
+shows the next tournament with a countdown, plus the rest of the season.
+
+In that state the header must also not say *"Neither McIlroy nor Scheffler is
+in this field"* — nobody is in the field yet, because there isn't one. It says
+the field is announced nearer the week instead. `.test/gap.mjs` covers this.
+
 #### The weekend is a spoiler
 
 Rounds 1 and 2 tee times are drawn at random and give nothing away. Rounds 3
