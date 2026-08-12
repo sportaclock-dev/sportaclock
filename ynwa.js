@@ -44,53 +44,115 @@ const FIXTURE_TTL = 5 * 60 * 1000;
 const LIVE_TTL = 15 * 1000;   // while the ball is rolling
 const IDLE_TTL = 5 * 60 * 1000; // before kickoff / after full time
 
+/* Event IDs are global across ESPN's soccer competitions — probing a
+   club.friendly match through the eng.1 slug returns it fine. So the
+   slug in a summary URL is decorative and we never have to guess it. */
+const ANY_SLUG = "eng.1";
+
 let fixtureCache = { at: 0, data: null };
 let feedCache = { at: 0, key: "", payload: null };
 
 const yyyymmdd = (d) => d.toISOString().slice(0, 10).replace(/-/g, "");
 
-async function getJson(url) {
-  const r = await fetch(url);
-  if (!r.ok) throw new Error(`ESPN responded ${r.status}`);
-  return r.json();
+/* Reports what happened instead of throwing it away. The first version
+   wrapped every attempt in a bare catch, so a 403 and "no fixtures" were
+   indistinguishable — which is exactly why the page said "no match found"
+   without saying why. */
+async function tryJson(url) {
+  try {
+    const r = await fetch(url);
+    if (!r.ok) return { ok: false, status: r.status, note: `HTTP ${r.status}` };
+    return { ok: true, status: 200, data: await r.json() };
+  } catch (e) {
+    return { ok: false, status: 0, note: e.message.slice(0, 80) };
+  }
 }
 
-/* ---------- find the match ---------- */
-async function findMatch() {
-  if (fixtureCache.data && Date.now() - fixtureCache.at < FIXTURE_TTL) {
-    return fixtureCache.data;
-  }
-  const from = new Date(Date.now() - 36 * 3600 * 1000);
-  const to = new Date(Date.now() + 21 * 24 * 3600 * 1000);
-  const range = `${yyyymmdd(from)}-${yyyymmdd(to)}`;
+async function getJson(url) {
+  const r = await tryJson(url);
+  if (!r.ok) throw new Error(r.note);
+  return r.data;
+}
 
+const isLiverpool = (c) =>
+  String(c && c.id) === LIVERPOOL || String(c && c.team && c.team.id) === LIVERPOOL;
+
+function normalise(ev, sourceLabel) {
+  const comp = (ev.competitions && ev.competitions[0]) || {};
+  const st = (ev.status && ev.status.type) || (comp.status && comp.status.type) || {};
+  return {
+    id: String(ev.id),
+    name: ev.name || ev.shortName || "",
+    date: ev.date || comp.date || null,
+    state: st.state || "pre",
+    league: (ev.league && ev.league.name) || (ev.season && ev.season.slug) || sourceLabel,
+    source: sourceLabel,
+  };
+}
+
+/* ---------- find the match ----------
+   Two routes. The team fixture list is one request and spans every
+   competition Liverpool play in, so it goes first. The per-slug
+   scoreboard sweep is the backup. */
+async function findMatch(debug) {
+  if (!debug && fixtureCache.data && Date.now() - fixtureCache.at < FIXTURE_TTL) {
+    return { match: fixtureCache.data, diag: [] };
+  }
+
+  const diag = [];
   const found = [];
-  for (const slug of SLUGS) {
-    try {
-      const data = await getJson(`${SITE}/${slug}/scoreboard?dates=${range}`);
-      for (const ev of data.events || []) {
-        const comp = (ev.competitions && ev.competitions[0]) || {};
-        const teams = comp.competitors || [];
-        if (!teams.some((c) => String(c.id) === LIVERPOOL)) continue;
-        found.push({
-          id: String(ev.id),
-          slug,
-          name: ev.name || ev.shortName,
-          date: ev.date,
-          state: (ev.status && ev.status.type && ev.status.type.state) || "pre",
-          league: (data.leagues && data.leagues[0] && data.leagues[0].name) || slug,
-        });
-      }
-    } catch { /* one dead slug shouldn't sink the hunt */ }
+
+  // route 1 — Liverpool's own fixture list
+  for (const url of [
+    `${SITE}/${ANY_SLUG}/teams/${LIVERPOOL}/schedule`,
+    `${SITE}/${ANY_SLUG}/teams/${LIVERPOOL}/schedule?season=${new Date().getFullYear()}`,
+  ]) {
+    const r = await tryJson(url);
+    const evs = (r.ok && Array.isArray(r.data.events)) ? r.data.events : [];
+    diag.push({ step: "team-schedule", url, status: r.status, events: evs.length, note: r.note || "" });
+    for (const ev of evs) found.push(normalise(ev, "team-schedule"));
+    if (evs.length) break;
   }
 
-  if (!found.length) throw new Error("Fann engan leik hjá Liverpool næstu 3 vikur");
+  // route 2 — sweep the competition scoreboards
+  if (!found.length) {
+    const from = new Date(Date.now() - 36 * 3600 * 1000);
+    const to = new Date(Date.now() + 21 * 24 * 3600 * 1000);
+    const range = `${yyyymmdd(from)}-${yyyymmdd(to)}`;
+    for (const slug of SLUGS) {
+      const url = `${SITE}/${slug}/scoreboard?dates=${range}`;
+      const r = await tryJson(url);
+      const evs = (r.ok && Array.isArray(r.data.events)) ? r.data.events : [];
+      let hits = 0;
+      for (const ev of evs) {
+        const comp = (ev.competitions && ev.competitions[0]) || {};
+        if (!(comp.competitors || []).some(isLiverpool)) continue;
+        hits++;
+        found.push(normalise(ev, slug));
+      }
+      diag.push({ step: "scoreboard", slug, status: r.status, events: evs.length, liverpool: hits, note: r.note || "" });
+    }
+  }
 
-  // a match in progress wins; otherwise the soonest one
-  found.sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
-  const match = found.find((f) => f.state === "in") || found[0];
+  // keep what hasn't finished, soonest first; anything in progress wins
+  const now = Date.now();
+  const live = found.filter((f) => f.state === "in");
+  const ahead = found
+    .filter((f) => f.date && Date.parse(f.date) > now - 4 * 3600 * 1000 && f.state !== "post")
+    .sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
+
+  const match = live[0] || ahead[0] || null;
+  if (!match) {
+    const reached = diag.some((d) => d.status === 200);
+    throw Object.assign(
+      new Error(reached
+        ? "Náði í ESPN en fann engan leik hjá Liverpool framundan"
+        : "Náði ekki sambandi við ESPN"),
+      { diag },
+    );
+  }
   fixtureCache = { at: Date.now(), data: match };
-  return match;
+  return { match, diag };
 }
 
 /* ============================================================
@@ -263,21 +325,29 @@ function headerOf(summary) {
 
 /* ---------- routes ---------- */
 export async function ynwaApi(req, res) {
+  const debug = req.query.debug === "1";
+  let diag = [];
   try {
     const forced = String(req.query.event || "").replace(/\D/g, "");
-    const slugHint = String(req.query.slug || "");
-    const match = forced
-      ? { id: forced, slug: slugHint || "club.friendly", name: "", date: null, state: "" }
-      : await findMatch();
+    let match;
+    if (forced) {
+      match = { id: forced, name: "", date: null, state: "", league: "", source: "forced" };
+    } else {
+      const r = await findMatch(debug);
+      match = r.match;
+      diag = r.diag;
+    }
 
+    const slug = String(req.query.slug || "") || ANY_SLUG;
     const cacheKey = match.id;
     const ttl = feedCache.payload && feedCache.payload.header
       && feedCache.payload.header.state === "in" ? LIVE_TTL : IDLE_TTL;
-    if (feedCache.payload && feedCache.key === cacheKey && Date.now() - feedCache.at < ttl) {
+    if (!debug && feedCache.payload && feedCache.key === cacheKey
+        && Date.now() - feedCache.at < ttl) {
       return res.json(feedCache.payload);
     }
 
-    const summary = await getJson(`${SITE}/${match.slug}/summary?event=${match.id}`);
+    const summary = await getJson(`${SITE}/${slug}/summary?event=${match.id}`);
     const header = headerOf(summary);
     const feed = buildFeed(summary);
 
@@ -294,19 +364,120 @@ export async function ynwaApi(req, res) {
       ok: true,
       fetchedAt: new Date().toISOString(),
       eventId: match.id,
-      slug: match.slug,
+      slug,
+      matchName: match.name,
+      via: match.source,
       kickoffIso: header.kickoff,
       header,
       lagSec,
       untranslated: feed.filter((f) => !f.known).length,
       feed,
     };
-    feedCache = { at: Date.now(), key: cacheKey, payload };
+    if (debug) payload.diag = diag;
+    if (!debug) feedCache = { at: Date.now(), key: cacheKey, payload };
     res.json(payload);
   } catch (err) {
     console.error("[/api/ynwa]", err.message);
-    res.json({ ok: false, reason: err.message });
+    res.json({
+      ok: false,
+      reason: err.message,
+      // ?debug=1 shows every endpoint tried, its status and what came back
+      diag: err.diag || diag,
+    });
   }
+}
+
+/* ============================================================
+   /api/ynwa/probe — throwaway diagnostic.
+
+   ESPN answers a browser in Iceland but returned 403 to Railway for
+   a soccer summary, while the golf and NFL routes were working. That
+   could mean any of: the whole IP is blocked, only soccer is blocked,
+   only that host is blocked, or the request shape matters.
+
+   Guessing costs a deploy each time. This asks all of them at once,
+   from the server's own address, and reports what came back.
+   ============================================================ */
+const PROBE_EVENT = "401886533"; // Liverpool 2-3 Monaco
+
+const PROBES = [
+  ["soccer summary (current path)",
+    `${SITE}/eng.1/summary?event=${PROBE_EVENT}`],
+  ["soccer scoreboard",
+    `${SITE}/eng.1/scoreboard`],
+  ["soccer team schedule",
+    `${SITE}/eng.1/teams/${LIVERPOOL}/schedule`],
+  ["golf scoreboard (does the working route still work?)",
+    "https://site.api.espn.com/apis/site/v2/sports/golf/pga/scoreboard"],
+  ["nfl scoreboard (the other ESPN caller)",
+    "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"],
+  ["soccer via site.web.api host",
+    `https://site.web.api.espn.com/apis/site/v2/sports/soccer/eng.1/summary?event=${PROBE_EVENT}`],
+  ["soccer via cdn.espn.com core",
+    `https://cdn.espn.com/core/soccer/commentary?xhr=1&gameId=${PROBE_EVENT}`],
+  ["soccer via cdn.espn.com match",
+    `https://cdn.espn.com/core/soccer/match?xhr=1&gameId=${PROBE_EVENT}`],
+  ["fauxcast sync feed (from the payload's meta.syncUrl)",
+    `https://client.espncdn.com/fauxcast/stats/19834/${PROBE_EVENT}/en/us/`],
+];
+
+const BROWSERISH = {
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+    "(KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+  Accept: "application/json, text/plain, */*",
+  "Accept-Language": "en-US,en;q=0.9",
+  Referer: "https://www.espn.com/",
+};
+
+async function probeOne(label, url, headers) {
+  const started = Date.now();
+  try {
+    const r = await fetch(url, headers ? { headers } : undefined);
+    const body = await r.text();
+    let shape = "";
+    try {
+      const j = JSON.parse(body);
+      const keys = Object.keys(j);
+      shape = keys.slice(0, 8).join(",");
+      if (Array.isArray(j.events)) shape += `  events:${j.events.length}`;
+      if (Array.isArray(j.commentary)) shape += `  commentary:${j.commentary.length}`;
+      if (j.gamepackageJSON) shape += "  (gamepackageJSON present)";
+    } catch {
+      shape = "not JSON — " + body.slice(0, 60).replace(/\s+/g, " ");
+    }
+    return {
+      label, url: url.slice(0, 96),
+      headers: headers ? "browser-ish" : "none",
+      status: r.status, ms: Date.now() - started,
+      bytes: body.length, shape,
+    };
+  } catch (e) {
+    return { label, url: url.slice(0, 96), headers: headers ? "browser-ish" : "none",
+      status: 0, ms: Date.now() - started, bytes: 0, shape: "ERR " + e.message.slice(0, 60) };
+  }
+}
+
+export async function ynwaProbe(req, res) {
+  const out = [];
+  for (const [label, url] of PROBES) out.push(await probeOne(label, url, null));
+  // and the current path again, this time pretending to be a browser
+  out.push(await probeOne("soccer summary + browser headers",
+    `${SITE}/eng.1/summary?event=${PROBE_EVENT}`, BROWSERISH));
+
+  const ok = out.filter((o) => o.status === 200);
+  res.set("Content-Type", "text/plain; charset=utf-8").send(
+    "ESPN reachability from this server\n" +
+    "=================================\n" +
+    new Date().toISOString() + "\n\n" +
+    out.map((o) =>
+      `${String(o.status).padStart(3)}  ${o.ms}ms  ${String(o.bytes).padStart(7)}b  ` +
+      `[${o.headers}]  ${o.label}\n     ${o.url}\n     ${o.shape}\n`
+    ).join("\n") +
+    `\n${ok.length} of ${out.length} returned 200.\n` +
+    (ok.length ? "WORKING:\n" + ok.map((o) => "  - " + o.label).join("\n") + "\n"
+               : "Nothing got through — the whole IP looks blocked.\n"),
+  );
 }
 
 export function ynwaPage(req, res) {
@@ -385,6 +556,8 @@ h1{font-weight:900;font-size:clamp(1.8rem,7vw,2.7rem);margin:9px 0 2px;letter-sp
 .en{margin-top:5px;font-size:.76rem;color:var(--faint);line-height:1.45;display:none}
 body.show-en .en{display:block}
 .kind{font-size:.6rem;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);margin-top:4px}
+.diag{margin-top:14px;padding-top:12px;border-top:1px solid var(--line);text-align:left;font-family:var(--mono);font-size:.68rem;color:var(--faint);line-height:1.9}
+.diag code{color:var(--muted)}
 .empty{padding:22px 16px;text-align:center;color:var(--dim);font-size:.9rem;line-height:1.6;
   background:var(--panel);border:1px solid var(--line);border-radius:10px}
 footer{margin-top:34px;padding-top:14px;border-top:1px solid var(--line);
@@ -442,8 +615,22 @@ function render(d){
 
   if (!d.ok){
     scoreEl.innerHTML = "";
-    feedEl.innerHTML = '<div class="empty">Enginn leikur fannst.<br><span style="color:#4A4A53">'
-      + (d.reason||"") + '</span></div>';
+    var help = '<div class="empty">Enginn leikur fannst.<br>'
+      + '<span style="color:#4A4A53">' + esc(d.reason||"") + '</span>';
+    if (d.diag && d.diag.length){
+      help += '<div class="diag"><b>Hvað var reynt:</b><br>' + d.diag.map(function(x){
+        return esc((x.step||"") + (x.slug ? " " + x.slug : "")) + " — HTTP " + x.status
+          + " · " + (x.events||0) + " leikir"
+          + (x.liverpool != null ? " · " + x.liverpool + " með Liverpool" : "")
+          + (x.note ? " · " + esc(x.note) : "");
+      }).join("<br>") + "</div>";
+    } else {
+      help += '<div class="diag">Bættu við <code>?debug=1</code> við slóðina '
+        + 'til að sjá hvað var reynt.</div>';
+    }
+    feedEl.innerHTML = help + "</div>";
+    statusEl.textContent = "";
+    diagEl.textContent = "";
     return;
   }
 

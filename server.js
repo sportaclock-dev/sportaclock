@@ -3,7 +3,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import nflRoute from "./nfl.js";
 import golfRoute from "./golf.js";
-import { ynwaApi, ynwaPage } from "./ynwa.js";
+import { ynwaApi, ynwaPage, ynwaProbe } from "./ynwa.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -337,6 +337,7 @@ app.get("/api/golf", golfRoute);
 // YNWA experiment — a standalone Liverpool live feed in Icelandic.
 // Registered before the SPA catch-all so /ynwa serves its own page.
 app.get("/api/ynwa", ynwaApi);
+app.get("/api/ynwa/probe", ynwaProbe);
 app.get("/ynwa", ynwaPage);
 
 // Serve the built frontend
