@@ -1,3 +1,4 @@
+import { espnTry } from "./espn.js";
 /* ============================================================
    SPORTACLOCK — /api/golf
    PGA Tour tee times via ESPN's public (undocumented) API.
@@ -319,7 +320,8 @@ function mapEvents(events) {
 const stillRelevant = (e) => Date.parse(e.end) >= Date.now() - 12 * 3600000;
 
 async function scheduleForYear(yr) {
-  const r = await fetch(`${BASE}/pga/scoreboard?dates=${yr}`);
+  const t = await espnTry(`${BASE}/pga/scoreboard?dates=${yr}`);
+  const r = { ok: t.ok, status: t.status, json: async () => t.data };
   if (!r.ok) throw new Error(`ESPN schedule responded ${r.status}`);
   const data = await r.json();
   return mapEvents(data.events).filter(stillRelevant);
@@ -328,7 +330,8 @@ async function scheduleForYear(yr) {
 /* The undated scoreboard still returns the current tournament. Worth far more
    than an empty tab if the season query fails or comes back bare. */
 async function currentOnly() {
-  const r = await fetch(`${BASE}/pga/scoreboard`);
+  const t = await espnTry(`${BASE}/pga/scoreboard`);
+  const r = { ok: t.ok, status: t.status, json: async () => t.data };
   if (!r.ok) throw new Error(`ESPN scoreboard responded ${r.status}`);
   const data = await r.json();
   return mapEvents(data.events);
@@ -396,7 +399,8 @@ async function fetchSchedule() {
 
 /* The leaderboard endpoint is the only place courses and competitors live. */
 async function fetchDetail(id) {
-  const r = await fetch(`${BASE}/leaderboard?event=${id}`);
+  const t = await espnTry(`${BASE}/leaderboard?event=${id}`);
+  const r = { ok: t.ok, status: t.status, json: async () => t.data };
   if (!r.ok) throw new Error(`leaderboard ${id} responded ${r.status}`);
   return r.json();
 }

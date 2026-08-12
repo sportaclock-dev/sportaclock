@@ -1,3 +1,4 @@
+import { espnTry } from "./espn.js";
 /* ============================================================
    SPORTACLOCK — /api/nfl
    Full 2026 NFL schedule via ESPN's public (undocumented) API.
@@ -74,7 +75,8 @@ export default async function nflRoute(req, res) {
       return res.json(cache.payload);
     }
 
-    const r = await fetch(ESPN_URL);
+    const t = await espnTry(ESPN_URL);
+    const r = { ok: t.ok, status: t.status, json: async () => t.data };
     if (!r.ok) throw new Error(`ESPN responded ${r.status}`);
     const data = await r.json();
 

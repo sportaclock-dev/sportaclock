@@ -1,3 +1,4 @@
+import { espnTry, espnStatus } from "./espn.js";
 /* ============================================================
    YNWA — Liverpool live feed in Icelandic
    A self-contained experiment living at /ynwa on sportaclock.com.
@@ -107,13 +108,12 @@ function ttlFor(payload) {
    indistinguishable — which is exactly why the page said "no match found"
    without saying why. */
 async function tryJson(url) {
-  try {
-    const r = await fetch(url);
-    if (!r.ok) return { ok: false, status: r.status, note: `HTTP ${r.status}` };
-    return { ok: true, status: 200, data: await r.json() };
-  } catch (e) {
-    return { ok: false, status: 0, note: e.message.slice(0, 80) };
-  }
+  // Goes through the shared client so a refusal here also quietens golf
+  // and the NFL, instead of three features hammering independently.
+  const r = await espnTry(url);
+  return r.ok
+    ? { ok: true, status: 200, data: r.data }
+    : { ok: false, status: r.status, note: r.note || `HTTP ${r.status}` };
 }
 
 async function getJson(url) {
@@ -261,6 +261,13 @@ const MONTHS_IS = ["janúar", "febrúar", "mars", "apríl", "maí", "júní",
   "júlí", "ágúst", "september", "október", "nóvember", "desember"];
 
 const pad2 = (n) => String(n).padStart(2, "0");
+
+export function kickoffDayIs(iso) {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return "";
+  const d = new Date(t);
+  return `${DAYS_IS[d.getDay()]} ${d.getDate()}. ${MONTHS_IS[d.getMonth()]}`;
+}
 
 export function kickoffTextIs(iso) {
   const t = Date.parse(iso);
@@ -495,10 +502,14 @@ export async function ynwaApi(req, res) {
         eventId: match.id, slug, matchName: match.name, via: match.source,
         kickoffIso: match.date || null,
         kickoffText: kickoffTextIs(match.date),
+        kickoffDay: kickoffDayIs(match.date),
         header: headerFromMatch(match),
         lagSec: null, untranslated: 0, feed: [],
       };
       if (debug) limited.diag = diag;
+      // Brief cache: a refused summary shouldn't be retried on every reload,
+      // but should recover quickly once ESPN relents.
+      if (!debug) feedCache = { at: Date.now(), key: cacheKey, payload: limited, ttl: 60000 };
       return res.json(limited);
     }
     const summary = sum.data;
@@ -523,6 +534,7 @@ export async function ynwaApi(req, res) {
       via: match.source,
       kickoffIso: header.kickoff,
       kickoffText: kickoffTextIs(header.kickoff),
+      kickoffDay: kickoffDayIs(header.kickoff),
       header,
       lagSec,
       untranslated: feed.filter((f) => !f.known).length,
@@ -617,6 +629,15 @@ async function probeOne(label, url, headers) {
 }
 
 export async function ynwaProbe(req, res) {
+  const st = espnStatus();
+  if (st.open) {
+    return res.set("Content-Type", "text/plain; charset=utf-8").send(
+      "ESPN traffic is paused by the shared circuit breaker.\n" +
+      `Reopens in ${st.reopensInSec}s (tripped at ${st.since}).\n\n` +
+      `ok:${st.totals.ok}  refused:${st.totals.refused}  skipped:${st.totals.skipped}\n\n` +
+      "Probing now would only extend it. Try again after that.\n",
+    );
+  }
   const out = [];
   for (const [label, url] of PROBES) out.push(await probeOne(label, url, null));
   // and the current path again, this time pretending to be a browser
@@ -687,6 +708,7 @@ h1{font-weight:900;font-size:clamp(1.8rem,7vw,2.7rem);margin:9px 0 2px;letter-sp
 .side .nm{font-weight:700;font-size:.9rem}
 .nums{font-family:var(--mono);font-weight:600;font-size:clamp(1.9rem,9vw,3rem);
   font-variant-numeric:tabular-nums;letter-spacing:.02em;white-space:nowrap}
+.nums--time{font-size:clamp(1.7rem,7vw,2.4rem);color:var(--text)}
 .state{text-align:center;font-size:.64rem;letter-spacing:.18em;text-transform:uppercase;
   color:var(--muted);margin-top:6px}
 .state.live{color:var(--redbright);font-weight:900;animation:pulse 1.6s infinite}
@@ -774,7 +796,7 @@ function untilIs(ms){
 function stateLabel(h, d){
   if (h.state === "in") return { text:"í beinni · " + (h.detail||""), live:true };
   if (h.state === "post") return { text:"leik lokið", live:false };
-  return { text:"hefst " + (d.kickoffText || "síðar"), live:false };
+  return { text:"hefst " + (d.kickoffDay || d.kickoffText || "síðar"), live:false };
 }
 
 function render(d){
@@ -805,13 +827,20 @@ function render(d){
   }
 
   const h = d.header, s = stateLabel(h, d);
-  const shown = h.state === "pre" ? "–" : (h.home.score || "0");
-  const shown2 = h.state === "pre" ? "–" : (h.away.score || "0");
+  // Before kickoff there is no score to show, so the middle carries the
+  // start time instead of three meaningless dashes.
+  var middle;
+  if (h.state === "pre" && h.kickoff){
+    var k = new Date(h.kickoff);
+    middle = '<div class="nums nums--time">'+p2(k.getHours())+':'+p2(k.getMinutes())+'</div>';
+  } else {
+    middle = '<div class="nums">'+(h.home.score||"0")+' – '+(h.away.score||"0")+'</div>';
+  }
   scoreEl.innerHTML =
     '<div class="score">'
     + '<div class="side">' + (h.home.logo ? '<img src="'+h.home.logo+'" alt="">' : "")
       + '<span class="nm">'+h.home.short+'</span></div>'
-    + '<div><div class="nums">'+shown+' – '+shown2+'</div>'
+    + '<div>' + middle
       + '<div class="state'+(s.live?" live":"")+'">'+s.text+'</div></div>'
     + '<div class="side">' + (h.away.logo ? '<img src="'+h.away.logo+'" alt="">' : "")
       + '<span class="nm">'+h.away.short+'</span></div>'
