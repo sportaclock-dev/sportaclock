@@ -40,7 +40,33 @@ const SLUGS = [
   "fifa.cwc",
 ];
 
-const FIXTURE_TTL = 5 * 60 * 1000;
+/* ESPN rate-limits, and refuses everything for a while once you cross the
+   line. The first version swept eight competition scoreboards WITHOUT
+   stopping at the match it had just found, then discarded the answer five
+   minutes later and did it again — about 120 requests an hour to re-learn
+   a fixture that doesn't change. Hence: stop at the first hit, remember it
+   for hours, and back off hard when refused. */
+const FIXTURE_TTL = 6 * 60 * 60 * 1000;
+const BACKOFF_BASE = 2 * 60 * 1000;
+const BACKOFF_MAX = 30 * 60 * 1000;
+
+/* A known fixture to fall back on when ESPN won't talk and we have nothing
+   cached — a cold start during a rate limit would otherwise show an error
+   instead of the match and its countdown. Harmless once it's in the past;
+   delete it whenever. Found by the hunt itself on 12 Aug. */
+const SEED = {
+  id: "401886535",
+  name: "Como at Liverpool",
+  date: "2026-08-16T11:00Z",
+  state: "pre",
+  league: "Club Friendly",
+  source: "seed",
+};
+
+let known = null;       // the last match we successfully identified
+let knownAt = 0;
+let refusals = 0;
+let backoffUntil = 0;
 const LIVE_TTL = 15 * 1000;   // while the ball is rolling
 const IDLE_TTL = 5 * 60 * 1000; // before kickoff / after full time
 
@@ -50,9 +76,31 @@ const IDLE_TTL = 5 * 60 * 1000; // before kickoff / after full time
 const ANY_SLUG = "eng.1";
 
 let fixtureCache = { at: 0, data: null };
-let feedCache = { at: 0, key: "", payload: null };
+let feedCache = { at: 0, key: "", payload: null, ttl: 0 };
 
 const yyyymmdd = (d) => d.toISOString().slice(0, 10).replace(/-/g, "");
+
+/* How long this payload may be reused.
+
+   Keying off the cached state alone meant the five-minute idle cache
+   could survive kickoff — the feed would start up to five minutes late
+   at the one moment anyone is watching. So: live is always fast, the
+   quarter-hour before kickoff is fast, and before that the cache is
+   capped so it expires exactly as that window opens. */
+function ttlFor(payload) {
+  const st = payload.header && payload.header.state;
+  if (st === "in") return LIVE_TTL;
+  if (st === "post") return IDLE_TTL; // full time — nothing more is coming
+
+  const ko = payload.kickoffIso ? Date.parse(payload.kickoffIso) : NaN;
+  if (Number.isFinite(ko)) {
+    const now = Date.now();
+    const opens = ko - 15 * 60 * 1000;
+    if (now >= opens && now < ko + 4 * 3600 * 1000) return LIVE_TTL;
+    if (now < opens) return Math.max(5000, Math.min(IDLE_TTL, opens - now));
+  }
+  return IDLE_TTL;
+}
 
 /* Reports what happened instead of throwing it away. The first version
    wrapped every attempt in a bare catch, so a 403 and "no fixtures" were
@@ -95,64 +143,105 @@ function normalise(ev, sourceLabel) {
    competition Liverpool play in, so it goes first. The per-slug
    scoreboard sweep is the backup. */
 async function findMatch(debug) {
-  if (!debug && fixtureCache.data && Date.now() - fixtureCache.at < FIXTURE_TTL) {
-    return { match: fixtureCache.data, diag: [] };
+  const now = Date.now();
+  const stillRelevant = (m) => {
+    const t = m && m.date ? Date.parse(m.date) : NaN;
+    return Number.isFinite(t) && now < t + 4 * 3600 * 1000;
+  };
+
+  // Already know the answer? A fixture doesn't move, and one we've found
+  // stays right until it's several hours old.
+  if (known && !debug && (stillRelevant(known) || now - knownAt < FIXTURE_TTL)) {
+    return { match: known, diag: [{ step: "cached", note: "þekktur leikur" }] };
+  }
+
+  // Refused recently — asking again immediately is what got us blocked.
+  if (now < backoffUntil) {
+    const waitS = Math.round((backoffUntil - now) / 1000);
+    const diag = [{ step: "backoff", status: 0, note: `bíð í ${waitS}s eftir 403 frá ESPN` }];
+    if (known) return { match: known, diag };
+    const t = Date.parse(SEED.date);
+    if (Number.isFinite(t) && now < t + 4 * 3600 * 1000) {
+      diag.push({ step: "seed", status: 0, note: "nota þekktan leik úr stillingum" });
+      return { match: { ...SEED }, diag };
+    }
+    throw Object.assign(
+      new Error(`ESPN takmarkar fyrirspurnir — reyni aftur eftir ${waitS}s`), { diag });
   }
 
   const diag = [];
-  const found = [];
+  let match = null;
+  let sawSuccess = false;
 
-  // route 1 — Liverpool's own fixture list
-  for (const url of [
-    `${SITE}/${ANY_SLUG}/teams/${LIVERPOOL}/schedule`,
-    `${SITE}/${ANY_SLUG}/teams/${LIVERPOOL}/schedule?season=${new Date().getFullYear()}`,
-  ]) {
-    const r = await tryJson(url);
-    const evs = (r.ok && Array.isArray(r.data.events)) ? r.data.events : [];
-    diag.push({ step: "team-schedule", url, status: r.status, events: evs.length, note: r.note || "" });
-    for (const ev of evs) found.push(normalise(ev, "team-schedule"));
-    if (evs.length) break;
-  }
+  /* Sweep the competitions, but STOP at the first Liverpool fixture.
+     Continuing through the remaining seven was pure waste. */
+  const from = new Date(now - 36 * 3600 * 1000);
+  const to = new Date(now + 21 * 24 * 3600 * 1000);
+  const range = `${yyyymmdd(from)}-${yyyymmdd(to)}`;
 
-  // route 2 — sweep the competition scoreboards
-  if (!found.length) {
-    const from = new Date(Date.now() - 36 * 3600 * 1000);
-    const to = new Date(Date.now() + 21 * 24 * 3600 * 1000);
-    const range = `${yyyymmdd(from)}-${yyyymmdd(to)}`;
-    for (const slug of SLUGS) {
-      const url = `${SITE}/${slug}/scoreboard?dates=${range}`;
-      const r = await tryJson(url);
-      const evs = (r.ok && Array.isArray(r.data.events)) ? r.data.events : [];
-      let hits = 0;
-      for (const ev of evs) {
-        const comp = (ev.competitions && ev.competitions[0]) || {};
-        if (!(comp.competitors || []).some(isLiverpool)) continue;
-        hits++;
-        found.push(normalise(ev, slug));
-      }
-      diag.push({ step: "scoreboard", slug, status: r.status, events: evs.length, liverpool: hits, note: r.note || "" });
+  outer:
+  for (const slug of SLUGS) {
+    const r = await tryJson(`${SITE}/${slug}/scoreboard?dates=${range}`);
+
+    /* A 403 is about us, not about this competition — grinding through the
+       other seven only digs the hole deeper. Stop at the first refusal. */
+    if (!r.ok) {
+      diag.push({ step: "scoreboard", slug, status: r.status, events: 0,
+        liverpool: 0, note: (r.note || "") + " — hætti að spyrja" });
+      break outer;
+    }
+    sawSuccess = true;
+    const evs = Array.isArray(r.data.events) ? r.data.events : [];
+    const mine = [];
+    for (const ev of evs) {
+      const comp = (ev.competitions && ev.competitions[0]) || {};
+      if ((comp.competitors || []).some(isLiverpool)) mine.push(normalise(ev, slug));
+    }
+    diag.push({ step: "scoreboard", slug, status: r.status, events: evs.length,
+      liverpool: mine.length, note: r.note || "" });
+
+    if (mine.length) {
+      const ms = (f) => (f.date ? Date.parse(f.date) : NaN);
+      const live = mine.filter((f) => f.state === "in");
+      const done = mine.filter((f) => f.state === "post" && ms(f) > now - 4 * 3600 * 1000)
+        .sort((a, b) => ms(b) - ms(a));
+      const next = mine.filter((f) => f.state !== "post" && ms(f) > now - 4 * 3600 * 1000)
+        .sort((a, b) => ms(a) - ms(b));
+      match = live[0] || done[0] || next[0] || null;
+      if (match) break outer;
     }
   }
 
-  // keep what hasn't finished, soonest first; anything in progress wins
-  const now = Date.now();
-  const live = found.filter((f) => f.state === "in");
-  const ahead = found
-    .filter((f) => f.date && Date.parse(f.date) > now - 4 * 3600 * 1000 && f.state !== "post")
-    .sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
-
-  const match = live[0] || ahead[0] || null;
-  if (!match) {
-    const reached = diag.some((d) => d.status === 200);
-    throw Object.assign(
-      new Error(reached
-        ? "Náði í ESPN en fann engan leik hjá Liverpool framundan"
-        : "Náði ekki sambandi við ESPN"),
-      { diag },
-    );
+  if (match) {
+    known = match; knownAt = now; refusals = 0; backoffUntil = 0;
+    return { match, diag };
   }
-  fixtureCache = { at: Date.now(), data: match };
-  return { match, diag };
+
+  // Nothing found. If ESPN answered, the calendar really is empty; if it
+  // refused, back off — and keep serving whatever we already knew.
+  if (!sawSuccess) {
+    refusals++;
+    backoffUntil = now + Math.min(BACKOFF_MAX, BACKOFF_BASE * Math.pow(2, refusals - 1));
+    diag.push({ step: "backoff", status: 0,
+      note: `sett í bið í ${Math.round((backoffUntil - now) / 1000)}s` });
+  }
+  if (known) return { match: known, diag };
+
+  /* Fall back to the seed only when ESPN never answered. If it DID answer
+     and had no Liverpool fixture, believe it — a hardcoded guess shouldn't
+     override a live source that's working. */
+  const seedT = Date.parse(SEED.date);
+  if (!sawSuccess && Number.isFinite(seedT) && now < seedT + 4 * 3600 * 1000) {
+    diag.push({ step: "seed", status: 0, note: "nota þekktan leik úr stillingum" });
+    return { match: { ...SEED }, diag };
+  }
+
+  throw Object.assign(
+    new Error(sawSuccess
+      ? "Náði í ESPN en fann engan leik hjá Liverpool framundan"
+      : "ESPN takmarkar fyrirspurnir — reyni aftur sjálfkrafa"),
+    { diag },
+  );
 }
 
 /* ============================================================
@@ -161,6 +250,26 @@ async function findMatch(debug) {
    which is how Icelandic football coverage handles foreign
    players anyway — so no case endings to get wrong.
    ============================================================ */
+/* toLocaleString("is-IS", ...) fell back to English in the browser and
+   printed "Sunday, August 16 at 11:00 AM" — wrong language, wrong clock.
+   Same lesson as the commentary: don't rely on locale data, generate it.
+   Weekdays are in the accusative, which is what Icelandic uses for dates:
+   "hefst sunnudaginn 16. ágúst". */
+const DAYS_IS = ["sunnudaginn", "mánudaginn", "þriðjudaginn", "miðvikudaginn",
+  "fimmtudaginn", "föstudaginn", "laugardaginn"];
+const MONTHS_IS = ["janúar", "febrúar", "mars", "apríl", "maí", "júní",
+  "júlí", "ágúst", "september", "október", "nóvember", "desember"];
+
+const pad2 = (n) => String(n).padStart(2, "0");
+
+export function kickoffTextIs(iso) {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return "";
+  const d = new Date(t);
+  return `${DAYS_IS[d.getDay()]} ${d.getDate()}. ${MONTHS_IS[d.getMonth()]}`
+    + ` kl. ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
 const TEAM_IS = {
   Liverpool: "Liverpool",
   "AS Monaco": "Monaco",
@@ -298,6 +407,29 @@ function buildFeed(summary) {
   return out.reverse(); // newest first
 }
 
+/* Enough of a header to render the fixture and its countdown when the
+   commentary endpoint is refused. Knowing WHEN the match is beats showing
+   an error, and ESPN names events "Away at Home". */
+function headerFromMatch(m) {
+  const n = String(m.name || "");
+  let home = "", away = "";
+  if (n.includes(" at ")) { const [a, h] = n.split(" at "); away = a.trim(); home = h.trim(); }
+  else if (n.includes(" vs ")) { const [h, a] = n.split(" vs "); home = h.trim(); away = a.trim(); }
+  const side = (name) => ({
+    name, short: name, logo: "", score: "",
+    isLiverpool: /liverpool/i.test(name),
+  });
+  return {
+    home: side(home || "Liverpool"),
+    away: side(away || "—"),
+    state: m.state || "pre",
+    detail: "",
+    kickoff: m.date || null,
+    venue: "",
+    league: m.league || "",
+  };
+}
+
 function headerOf(summary) {
   const comp = (summary.header && summary.header.competitions && summary.header.competitions[0]) || {};
   const cs = comp.competitors || [];
@@ -340,14 +472,36 @@ export async function ynwaApi(req, res) {
 
     const slug = String(req.query.slug || "") || ANY_SLUG;
     const cacheKey = match.id;
-    const ttl = feedCache.payload && feedCache.payload.header
-      && feedCache.payload.header.state === "in" ? LIVE_TTL : IDLE_TTL;
+
+    // The TTL is decided when a payload is stored (see ttlFor), so a cold
+    // cache can't accidentally pick the slow one.
     if (!debug && feedCache.payload && feedCache.key === cacheKey
-        && Date.now() - feedCache.at < ttl) {
+        && Date.now() - feedCache.at < feedCache.ttl) {
       return res.json(feedCache.payload);
     }
 
-    const summary = await getJson(`${SITE}/${slug}/summary?event=${match.id}`);
+    const sum = await tryJson(`${SITE}/${slug}/summary?event=${match.id}`);
+    if (!sum.ok) {
+      // Serve the last good feed rather than blanking the page over one refusal.
+      if (feedCache.payload && feedCache.key === cacheKey) {
+        const stale = { ...feedCache.payload, stale: true, staleReason: sum.note };
+        if (debug) stale.diag = diag;
+        return res.json(stale);
+      }
+      // Nothing cached either — still show the fixture and its countdown.
+      const limited = {
+        ok: true, limited: true, limitedReason: sum.note,
+        fetchedAt: new Date().toISOString(),
+        eventId: match.id, slug, matchName: match.name, via: match.source,
+        kickoffIso: match.date || null,
+        kickoffText: kickoffTextIs(match.date),
+        header: headerFromMatch(match),
+        lagSec: null, untranslated: 0, feed: [],
+      };
+      if (debug) limited.diag = diag;
+      return res.json(limited);
+    }
+    const summary = sum.data;
     const header = headerOf(summary);
     const feed = buildFeed(summary);
 
@@ -368,13 +522,17 @@ export async function ynwaApi(req, res) {
       matchName: match.name,
       via: match.source,
       kickoffIso: header.kickoff,
+      kickoffText: kickoffTextIs(header.kickoff),
       header,
       lagSec,
       untranslated: feed.filter((f) => !f.known).length,
       feed,
     };
+    payload.cacheTtlMs = ttlFor(payload);
     if (debug) payload.diag = diag;
-    if (!debug) feedCache = { at: Date.now(), key: cacheKey, payload };
+    if (!debug) {
+      feedCache = { at: Date.now(), key: cacheKey, payload, ttl: payload.cacheTtlMs };
+    }
     res.json(payload);
   } catch (err) {
     console.error("[/api/ynwa]", err.message);
@@ -534,6 +692,7 @@ h1{font-weight:900;font-size:clamp(1.8rem,7vw,2.7rem);margin:9px 0 2px;letter-sp
 .state.live{color:var(--redbright);font-weight:900;animation:pulse 1.6s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
 .meta{margin-top:10px;color:var(--dim);font-size:.76rem;text-align:center;line-height:1.6}
+.until{margin-top:4px;text-align:center;font-family:var(--mono);font-size:.9rem;color:var(--text);font-variant-numeric:tabular-nums}
 
 .bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:16px 0 4px}
 .btn{padding:6px 12px;border-radius:20px;font-size:.72rem;font-weight:600;cursor:pointer;
@@ -598,13 +757,24 @@ const qs = new URLSearchParams(location.search);
 const api = "/api/ynwa" + (qs.toString() ? "?" + qs.toString() : "");
 let timer = null;
 
-const fmtTime = (iso) => new Date(iso).toLocaleString("is-IS",
-  { weekday:"long", day:"numeric", month:"long", hour:"2-digit", minute:"2-digit" });
+const p2 = function(n){ return String(n).padStart(2,"0"); };
+const clock24 = function(d){ return p2(d.getHours())+":"+p2(d.getMinutes())+":"+p2(d.getSeconds()); };
 
-function stateLabel(h){
+// "eftir 21 klst 36 mín" — generated, not localised, for the same reason
+// the commentary is.
+function untilIs(ms){
+  if (ms <= 0) return "";
+  var m = Math.floor(ms/60000), h = Math.floor(m/60), d = Math.floor(h/24);
+  if (d > 0) return "eftir " + d + (d === 1 ? " dag " : " daga ") + (h % 24) + " klst";
+  if (h > 0) return "eftir " + h + " klst " + (m % 60) + " mín";
+  if (m > 0) return "eftir " + m + " mín";
+  return "eftir augnablik";
+}
+
+function stateLabel(h, d){
   if (h.state === "in") return { text:"í beinni · " + (h.detail||""), live:true };
   if (h.state === "post") return { text:"leik lokið", live:false };
-  return { text:"hefst " + (h.kickoff ? fmtTime(h.kickoff) : "síðar"), live:false };
+  return { text:"hefst " + (d.kickoffText || "síðar"), live:false };
 }
 
 function render(d){
@@ -634,7 +804,7 @@ function render(d){
     return;
   }
 
-  const h = d.header, s = stateLabel(h);
+  const h = d.header, s = stateLabel(h, d);
   const shown = h.state === "pre" ? "–" : (h.home.score || "0");
   const shown2 = h.state === "pre" ? "–" : (h.away.score || "0");
   scoreEl.innerHTML =
@@ -646,11 +816,18 @@ function render(d){
     + '<div class="side">' + (h.away.logo ? '<img src="'+h.away.logo+'" alt="">' : "")
       + '<span class="nm">'+h.away.short+'</span></div>'
     + '</div>'
-    + '<p class="meta">' + [h.league, h.venue].filter(Boolean).join(" · ") + '</p>';
+    + '<p class="meta">' + [h.league, h.venue].filter(Boolean).join(" · ") + '</p>'
+    + (h.state === "pre" && d.kickoffIso
+        ? '<p class="until" id="until"></p>' : "");
+
+  startCountdown(h.state === "pre" ? d.kickoffIso : null);
 
   if (!d.feed.length){
-    feedEl.innerHTML = '<div class="empty">Lýsingin byrjar þegar flautað er til leiks.'
-      + '<br><span style="color:#4A4A53">Atburðir birtast hér sjálfkrafa.</span></div>';
+    feedEl.innerHTML = d.limited
+      ? '<div class="empty">Næ ekki í lýsinguna frá ESPN í augnablikinu.'
+        + '<br><span style="color:#4A4A53">Reyni sjálfkrafa aftur — leikurinn sjálfur er réttur.</span></div>'
+      : '<div class="empty">Lýsingin byrjar þegar flautað er til leiks.'
+        + '<br><span style="color:#4A4A53">Atburðir birtast hér sjálfkrafa.</span></div>';
   } else {
     feedEl.innerHTML = d.feed.map(function(f){
       const cls = "row" + (f.big?" big":"") + (f.kind==="info"?" info":"")
@@ -663,17 +840,38 @@ function render(d){
     }).join("");
   }
 
-  const t = new Date(d.fetchedAt).toLocaleTimeString("is-IS");
-  statusEl.textContent = "uppfært " + t;
+  const t = clock24(new Date(d.fetchedAt));
+  statusEl.textContent = (d.stale ? "síðast uppfært " : "uppfært ") + t;
   const bits = ["atburðir: " + d.feed.length];
   if (d.lagSec != null) bits.push("seinkun frá vellinum: ~" + d.lagSec + "s");
   if (d.untranslated) bits.push("óþýddar gerðir: " + d.untranslated);
   bits.push("leikur " + d.eventId + " (" + d.slug + ")");
+  if (d.stale) bits.push("ESPN svaraði ekki — sýni síðustu gögn");
+  if (d.limited) bits.push("ESPN takmarkar fyrirspurnir (" + (d.limitedReason||"") + ")");
   diagEl.textContent = bits.join("  ·  ");
 
-  const live = h.state === "in";
+  // 20s live; 30s from a quarter-hour before kickoff so the first whistle
+  // isn't missed by two minutes; 2 min otherwise.
+  const ko = h.kickoff ? Date.parse(h.kickoff) : null;
+  const soon = ko != null && Date.now() > ko - 15 * 60000 && Date.now() < ko + 4 * 3600000;
+  const wait = h.state === "in" ? 20000 : (soon ? 30000 : 120000);
   clearTimeout(timer);
-  timer = setTimeout(load, live ? 20000 : 120000);
+  timer = setTimeout(load, wait);
+}
+
+var tickTimer = null;
+function startCountdown(iso){
+  clearInterval(tickTimer);
+  var el = document.getElementById("until");
+  if (!iso || !el) return;
+  var ko = Date.parse(iso);
+  var draw = function(){
+    var left = ko - Date.now();
+    if (left <= 0){ el.textContent = "hefst núna"; clearInterval(tickTimer); return; }
+    el.textContent = untilIs(left);
+  };
+  draw();
+  tickTimer = setInterval(draw, 1000);
 }
 
 function esc(s){ return String(s==null?"":s)
