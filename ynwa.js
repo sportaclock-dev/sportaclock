@@ -369,9 +369,24 @@ const LOOSE = [
   [/^First Half begins/i, "Fyrri hálfleikur hafinn."],
   [/announced (\d+) minutes of added time/i, (m) =>
     `Uppbótartími: ${m[1]} mínútur.`],
+  /* Added after watching the first real live match (Como, 16 Aug): these
+     four all arrived as plain text with no play object attached at all —
+     something the historical, fully-settled Monaco data never showed,
+     since by full time everything's back-filled. Live, in-progress
+     commentary is evidently less complete in the moment than finished
+     data is, so text-pattern matching has to cover what play.id can't. */
+  [/^Foul by ([^(]+?)\s*\(([^)]+)\)\.?$/i, (m) => `Brot — ${m[1].trim()} (${m[2].trim()}).`],
+  // The other half of a foul pair, same shape as the duplicate-foul lines
+  // dedup already drops when a play.id IS present. No play.id here to key
+  // off, but it's pure restatement of the Foul-by line above — return
+  // nothing rather than show a near-duplicate.
+  [/wins a free kick in the (?:defensive|attacking|midfield) half\.?$/i, ""],
+  [/^Delay over\. They are ready to continue\.?$/i, "Leikur hefst að nýju."],
+  [/^Delay in match because of an injury [^(]+?\(([^)]+)\)\.?$/i, (m) =>
+    `Töf á leiknum — ${m[1].trim()}.`],
 ];
 
-function toIcelandic(entry) {
+export function toIcelandic(entry) {
   const play = entry.play;
   if (play && play.type) {
     const fn = TEMPLATES[play.type.type];
