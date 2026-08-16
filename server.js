@@ -394,11 +394,7 @@ async function footballProbe(req, res) {
   // doesn't touch Premier League clubs until January, League Cup not until
   // Liverpool enter in September. Query full calendar years, not "today",
   // so an empty result actually means something.
-  // eng.community_shield is a guess, same as the other two were — nothing
-  // confirms it exists. If football-data.org tracks the Shield at all, it'll
-  // already be sitting in out.fdo.englandCompetitions above with no extra
-  // code needed; that endpoint lists everything, not just guessed codes.
-  for (const [slug, label] of [["eng.fa", "FA Cup"], ["eng.league_cup", "League Cup"], ["eng.community_shield", "Community Shield"]]) {
+  for (const [slug, label] of [["eng.fa", "FA Cup"], ["eng.league_cup", "League Cup"]]) {
     const years = {};
     for (const yr of [2026, 2027]) {
       const r = await espnTry(`https://site.api.espn.com/apis/site/v2/sports/soccer/${slug}/scoreboard?dates=${yr}`);
@@ -408,6 +404,24 @@ async function footballProbe(req, res) {
         : { skipped: !!r.skipped, note: r.note };
     }
     out.espn[label] = years;
+  }
+
+  /* eng.community_shield doesn't exist (confirmed — 403 on a run where FA Cup
+     and League Cup succeeded, so it isn't the rate limiter). Liverpool's own
+     preseason friendlies all turned out to be filed under club.friendly
+     rather than a dedicated slug, so the Shield — a single exhibition match —
+     is a good bet to be sitting there too. List everything in the window it
+     would fall in (the week or two before the PL season starts) rather than
+     text-matching, since ESPN's event.name is just "Team A vs Team B", never
+     labelled with the competition name. */
+  {
+    const r = await espnTry(
+      "https://site.api.espn.com/apis/site/v2/sports/soccer/club.friendly/scoreboard?dates=20260725-20260817",
+    );
+    out.espn["Community Shield (via club.friendly, 25 Jul – 17 Aug 2026)"] = r.ok
+      ? { events: (r.data.events || []).length,
+          all: (r.data.events || []).map((e) => ({ name: e.name, date: e.date })) }
+      : { skipped: !!r.skipped, note: r.note };
   }
 
   res.json(out);
