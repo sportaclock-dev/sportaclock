@@ -4,6 +4,7 @@ import { fileURLToPath } from "url";
 import nflRoute from "./nfl.js";
 import golfRoute from "./golf.js";
 import { ynwaApi, ynwaPage, ynwaProbe } from "./ynwa.js";
+import { espnTry } from "./espn.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -320,6 +321,99 @@ async function icelandHandler(res) {
     res.json({ enabled: false, reason: err.message || "Could not reach TheSportsDB" });
   }
 }
+
+/* ============================================================
+   /api/football/probe — throwaway diagnostic, delete once answered.
+
+   Two independent checks, since guessing either would just repeat
+   the golf/OWGR/ESPN mistakes from earlier in this project:
+
+   1. football-data.org's OWN competition catalogue, called with the
+      real token already on this server. Answers: does an FA Cup or
+      League Cup code even exist for them, and is it on this plan?
+      (Being listed and being accessible are different things —
+      football-data.org gates a lot of competitions by tier.)
+
+   2. ESPN's soccer API under the eng.fa / eng.league_cup slugs —
+      guessed when YNWA's fixture hunt was built, never confirmed.
+      Free, and goes through the shared circuit breaker, so it can't
+      make things worse for golf/nfl/ynwa even if this gets hit hard.
+
+   MUST be registered before /api/football/:comp — that route treats
+   any path segment as a competition code, so "probe" would otherwise
+   be swallowed as an unknown competition and 404 silently.
+   ------------------------------------------------------------ */
+async function footballProbe(req, res) {
+  const out = { fdo: null, fdoCupAttempts: [], espn: {} };
+
+  if (!TOKEN) {
+    out.fdo = { status: 0, note: "No FOOTBALL_DATA_TOKEN set on this server" };
+  } else {
+    try {
+      const r = await fetch("https://api.football-data.org/v4/competitions", {
+        headers: { "X-Auth-Token": TOKEN },
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        out.fdo = { status: r.status, note: body.message || "request failed" };
+      } else {
+        const all = Array.isArray(body.competitions) ? body.competitions : [];
+        const england = all.filter((c) => c.area && c.area.name === "England");
+        out.fdo = {
+          status: r.status,
+          totalCompetitionsVisible: all.length,
+          englandCompetitions: england.map((c) => ({
+            code: c.code, name: c.name, type: c.type, plan: c.plan || null,
+          })),
+        };
+        // Listed isn't the same as accessible — actually try to pull matches
+        // for anything English and CUP-shaped.
+        for (const c of england.filter((c) => c.type === "CUP")) {
+          try {
+            const mr = await fetch(
+              `https://api.football-data.org/v4/competitions/${c.code}/matches`,
+              { headers: { "X-Auth-Token": TOKEN } },
+            );
+            const mbody = await mr.json().catch(() => ({}));
+            out.fdoCupAttempts.push({
+              code: c.code, name: c.name, status: mr.status,
+              matches: Array.isArray(mbody.matches) ? mbody.matches.length : 0,
+              note: mbody.message || "",
+            });
+          } catch (e) {
+            out.fdoCupAttempts.push({ code: c.code, name: c.name, status: 0, note: e.message });
+          }
+        }
+      }
+    } catch (e) {
+      out.fdo = { status: 0, note: e.message };
+    }
+  }
+
+  // A scoreboard can look "empty" just because nothing's on today — FA Cup
+  // doesn't touch Premier League clubs until January, League Cup not until
+  // Liverpool enter in September. Query full calendar years, not "today",
+  // so an empty result actually means something.
+  // eng.community_shield is a guess, same as the other two were — nothing
+  // confirms it exists. If football-data.org tracks the Shield at all, it'll
+  // already be sitting in out.fdo.englandCompetitions above with no extra
+  // code needed; that endpoint lists everything, not just guessed codes.
+  for (const [slug, label] of [["eng.fa", "FA Cup"], ["eng.league_cup", "League Cup"], ["eng.community_shield", "Community Shield"]]) {
+    const years = {};
+    for (const yr of [2026, 2027]) {
+      const r = await espnTry(`https://site.api.espn.com/apis/site/v2/sports/soccer/${slug}/scoreboard?dates=${yr}`);
+      years[yr] = r.ok
+        ? { events: (r.data.events || []).length,
+            sample: (r.data.events || []).slice(0, 3).map((e) => ({ name: e.name, date: e.date })) }
+        : { skipped: !!r.skipped, note: r.note };
+    }
+    out.espn[label] = years;
+  }
+
+  res.json(out);
+}
+
+app.get("/api/football/probe", footballProbe);
 
 app.get("/api/football/:comp", (req, res) => {
   const comp = String(req.params.comp || "").toUpperCase();
