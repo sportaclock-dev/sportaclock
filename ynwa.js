@@ -384,6 +384,14 @@ const LOOSE = [
   [/^Delay over\. They are ready to continue\.?$/i, "Leikur hefst að nýju."],
   [/^Delay in match because of an injury [^(]+?\(([^)]+)\)\.?$/i, (m) =>
     `Töf á leiknum — ${m[1].trim()}.`],
+  // Same phenomenon as the four above, different event: this substitution
+  // phrasing is identical to the one the structured template already
+  // handles ("Substitution, Como. X replaces Y.") — just arriving without
+  // a play object this time. Runs the team name through the same TEAM_IS
+  // shortening the templated path uses, so it stays consistent even for
+  // a team not yet seen in either path.
+  [/^Substitution, ([^.]+)\.\s*(.+?) replaces (.+?)\.?$/i, (m) =>
+    `Skipting hjá ${TEAM_IS[m[1].trim()] || m[1].trim()}: ${m[2].trim()} kemur inn á fyrir ${m[3].trim()}.`],
 ];
 
 export function toIcelandic(entry) {
