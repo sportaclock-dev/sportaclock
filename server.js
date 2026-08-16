@@ -416,7 +416,12 @@ async function footballProbe(req, res) {
      labelled with the competition name. */
   {
     const r = await espnTry(
-      "https://site.api.espn.com/apis/site/v2/sports/soccer/club.friendly/scoreboard?dates=20260725-20260817",
+      // Narrowed past the truncation point found in the last run: a 24-day
+      // window returned exactly 100 results (club.friendly mixes in every
+      // club on Earth) and cut off at 8 Aug — right before the date range
+      // a Shield would actually fall in. A ~9-day window stays well clear
+      // of that cap.
+      "https://site.api.espn.com/apis/site/v2/sports/soccer/club.friendly/scoreboard?dates=20260808-20260817",
     );
     out.espn["Community Shield (via club.friendly, 25 Jul – 17 Aug 2026)"] = r.ok
       ? { events: (r.data.events || []).length,
