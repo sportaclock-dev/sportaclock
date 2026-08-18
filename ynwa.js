@@ -1022,11 +1022,23 @@ function reRenderAll(){
 
 async function loadComments(){
   if (!lastData || !lastData.ok) return;
+  const el = document.getElementById("generalComments");
   try{
     const r = await fetch("/api/ynwa/comments?event="+encodeURIComponent(lastData.eventId), { cache:"no-store" });
     const j = await r.json();
     if (j.ok){ comments = j.comments; reRenderAll(); }
-  } catch(e){ /* comments are a nice-to-have, not core — fail silently */ }
+    else if (el) el.innerHTML = commentsErrorHtml(j.reason || "óþekkt villa");
+  } catch(e){ if (el) el.innerHTML = commentsErrorHtml(e.message); }
+}
+
+// Comments failing used to fail SILENTLY — nothing rendered, no way to tell
+// why. That made this exact problem undiagnosable from a screenshot. Now a
+// failure says so, with the actual reason (a misconfigured Upstash token
+// shows up here directly, rather than as an empty div).
+function commentsErrorHtml(reason){
+  return '<h3 class="colHead">Spjall</h3>'
+    + '<p style="color:#4A4A53;font-size:.8rem">Næ ekki í athugasemdir í augnablikinu'
+    + (reason ? ' — ' + esc(reason) : '') + '.</p>';
 }
 
 async function postComment(eventId, parentId, name, text){
