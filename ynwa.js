@@ -710,6 +710,8 @@ const PAGE = `<!doctype html>
   --mono:'IBM Plex Mono',ui-monospace,Menlo,monospace;
   --sans:'Archivo',system-ui,-apple-system,sans-serif;
 }
+html{font-size:17.5px} /* every size on the page is in rem, so this one line
+  nudges everything up together — a little bigger everywhere, no per-element hunting */
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);
   background-image:radial-gradient(ellipse 70% 40% at 50% -8%,rgba(200,16,46,.18),transparent 70%)}
@@ -791,6 +793,14 @@ body.show-en .en{display:block}
 .input::placeholder{color:var(--faint)}
 .textarea{width:100%;resize:vertical;min-height:64px;line-height:1.4}
 .textarea--reply{min-height:44px}
+.hp{position:absolute;left:-9999px;width:1px;height:1px;opacity:0}
+.botCheck{display:flex;align-items:center;gap:6px;font-size:.76rem;color:var(--dim);cursor:pointer}
+.botCheck input{accent-color:var(--red)}
+.adminDelete{color:var(--faint)}
+.adminDelete:hover{color:var(--red)}
+.adminWipe{display:block;margin-bottom:10px;padding:5px 10px;border:1px solid #4A1420;
+  border-radius:6px;color:var(--red);font-size:.68rem;font-family:var(--sans);background:none;cursor:pointer}
+.adminWipe:hover{background:rgba(200,16,46,.1)}
 #generalComments{margin-top:20px;padding-top:16px;border-top:1px solid var(--line2)}
 #generalComments .colHead{font-size:.7rem;letter-spacing:.14em;text-transform:uppercase;
   color:var(--muted);margin-bottom:8px}
@@ -853,8 +863,39 @@ function stateLabel(h, d){
   return { text:"hefst " + (d.kickoffDay || d.kickoffText || "síðar"), live:false };
 }
 
+// Every poll — every 20s while a match is live — rebuilds the feed's whole
+// innerHTML, which would otherwise silently wipe anything someone's
+// mid-typing into an open thread's composer. This snapshots every
+// composer-related field (name/email/text/checkbox/hidden bot-guard
+// fields) before a rebuild and restores it after, so an in-progress
+// comment survives a poll landing at the wrong moment — and just as
+// importantly, the ORIGINAL render timestamp is restored too, so someone
+// who's been typing for 10 seconds doesn't get flagged as submitting
+// impossibly fast just because a poll happened to reset the clock under
+// them mid-sentence.
+function snapshotComposers(){
+  var snap = {};
+  document.querySelectorAll(
+    ".composer input, .composer textarea, .replyBox input, .replyBox textarea, .botCheckbox"
+  ).forEach(function(el){
+    if (!el.id) return;
+    snap[el.id] = (el.type === "checkbox") ? el.checked : el.value;
+  });
+  return snap;
+}
+function restoreComposers(snap){
+  Object.keys(snap).forEach(function(id){
+    var el = document.getElementById(id);
+    if (!el) return;
+    if (el.type === "checkbox") el.checked = snap[id];
+    else el.value = snap[id];
+  });
+}
+
 function render(d){
   lastData = d;
+  var composerSnapshot = snapshotComposers();
+  try {
   const scoreEl = document.getElementById("score");
   const feedEl = document.getElementById("feed");
   const statusEl = document.getElementById("status");
@@ -933,6 +974,9 @@ function render(d){
   const wait = h.state === "in" ? 20000 : (soon ? 30000 : 120000);
   clearTimeout(timer);
   timer = setTimeout(load, wait);
+  } finally {
+    restoreComposers(composerSnapshot);
+  }
 }
 
 var tickTimer = null;
@@ -969,6 +1013,12 @@ function esc(s){ return String(s==null?"":s)
 var comments = [];
 var openThreads = new Set();
 var lastData = null;
+// A secret key of the admin's own choosing (set as ADMIN_KEY on the
+// server), attached only when THEY open the page with it. Nobody else
+// can produce delete buttons just by viewing the page — this value
+// isn't validated client-side, only used to attempt a delete, which the
+// server checks for real. Never share a URL that has this attached.
+var adminKey = new URLSearchParams(location.search).get("admin") || "";
 
 function commentsForEvent(seq){ return comments.filter(function(c){ return c.eventId === String(seq); }); }
 function generalComments(){ return comments.filter(function(c){ return c.eventId == null; }); }
@@ -1002,15 +1052,35 @@ function identityFieldsHtml(nameId, emailId){
     + '<input class="input" placeholder="Netfang (valfrjálst — birtist ekki, notað fyrir mynd)" id="'+emailId+'" value="'+esc(me.email)+'"></div>';
 }
 
+/* Bot guard: three cheap layers, none needing a third-party service.
+   (1) A checkbox — the thing that actually gets clicked, matching what
+       was asked for, though on its own it stops nothing scripted.
+   (2) A honeypot field, hidden off-screen (not display:none — some bots
+       specifically skip anything with that) rather than visually gone,
+       so a script that blindly fills every input trips it while no
+       human ever sees or touches it.
+   (3) A rendered-at timestamp — a submission within ~1.5s of the page
+       rendering is almost certainly a script, not someone reading and
+       typing.
+   All three are re-checked server-side, since anything client-side-only
+   is trivially bypassed by posting to the API directly. */
+function botGuardHtml(suffix){
+  return '<input type="text" class="hp" id="hp-'+suffix+'" tabindex="-1" autocomplete="off">'
+    + '<input type="hidden" id="ra-'+suffix+'" value="'+Date.now()+'">'
+    + '<label class="botCheck"><input type="checkbox" class="botCheckbox" data-guards="'+suffix+'"> Ég er ekki vélmenni</label>';
+}
+
 function commentHtml(c, depth){
   return '<div class="comment'+(depth?' reply':'')+'">'
     + '<div class="cMeta">'+avatarHtml(c)+'<b>'+esc(c.name)+'</b><span>'+clock24(new Date(c.at))+'</span></div>'
     + '<p>'+esc(c.text)+'</p>'
-    + (depth===0 ? '<button class="replyBtn" data-reply="'+c.id+'">svara</button>'
-      + '<div class="replyBox" id="replyBox-'+c.id+'">'
+    + (depth===0 ? '<button class="replyBtn" data-reply="'+c.id+'">svara</button>' : '')
+    + (adminKey ? ' <button class="replyBtn adminDelete" data-delete-comment="'+c.id+'">eyða</button>' : '')
+    + (depth===0 ? '<div class="replyBox" id="replyBox-'+c.id+'">'
         + identityFieldsHtml("rn-"+c.id, "re-"+c.id)
         + '<textarea class="input textarea textarea--reply" placeholder="Svar…" id="rt-'+c.id+'" rows="2"></textarea>'
-        + '<button data-send-reply="'+c.id+'">Senda</button></div>' : '')
+        + botGuardHtml("r"+c.id)
+        + '<button id="send-r'+c.id+'" data-send-reply="'+c.id+'" disabled>Senda</button></div>' : '')
     + repliesTo(c.id).map(function(r){ return commentHtml(r, depth+1); }).join("")
     + '</div>';
 }
@@ -1022,7 +1092,8 @@ function threadHtml(seq){
     + '<div class="composer">'
       + identityFieldsHtml("cn-"+seq, "ce-"+seq)
       + '<textarea class="input textarea" placeholder="Skrifaðu athugasemd…" id="ct-'+seq+'" rows="3"></textarea>'
-      + '<button data-send-event="'+seq+'">Senda</button></div></div>';
+      + botGuardHtml("c"+seq)
+      + '<button id="send-c'+seq+'" data-send-event="'+seq+'" disabled>Senda</button></div></div>';
 }
 
 function renderFeedRow(f){
@@ -1050,19 +1121,23 @@ function renderGeneral(){
     label = "Spjall um " + lastData.header.home.short + " – " + lastData.header.away.short;
   }
   el.innerHTML = '<h3 class="colHead">'+esc(label)+'</h3>'
+    + (adminKey ? '<button class="adminWipe" data-delete-all="1">eyða öllu spjalli fyrir þennan leik</button>' : '')
     + top.map(function(c){ return commentHtml(c, 0); }).join("")
     + '<div class="composer">'
       + identityFieldsHtml("gn", "ge")
       + '<textarea class="input textarea" placeholder="Skrifaðu athugasemd…" id="gt" rows="3"></textarea>'
-      + '<button data-send-general="1">Senda</button></div>';
+      + botGuardHtml("g")
+      + '<button id="send-g" data-send-general="1" disabled>Senda</button></div>';
 }
 
 
 function reRenderAll(){
+  var snap = snapshotComposers();
   if (lastData && lastData.ok && lastData.feed){
     document.getElementById("feed").innerHTML = lastData.feed.map(renderFeedRow).join("");
   }
   renderGeneral();
+  restoreComposers(snap);
 }
 
 async function loadComments(){
@@ -1090,17 +1165,43 @@ function commentsErrorHtml(reason){
     + (reason ? ' — ' + esc(reason) : '') + '.</p>';
 }
 
-async function postComment(eventId, parentId, name, email, text){
+async function deleteComment(id){
+  if (!lastData || !lastData.ok || !adminKey) return;
+  if (!confirm("Eyða þessari athugasemd (og svörum við henni)?")) return;
+  try{
+    await fetch("/api/ynwa/comments?event="+encodeURIComponent(lastData.eventId)+"&id="+encodeURIComponent(id)+"&key="+encodeURIComponent(adminKey), { method:"DELETE" });
+  } catch(e){ /* best effort */ }
+  await loadComments();
+}
+
+async function deleteAllComments(){
+  if (!lastData || !lastData.ok || !adminKey) return;
+  if (!confirm("Eyða ÖLLU spjalli fyrir þennan leik? Þetta er ekki hægt að afturkalla.")) return;
+  try{
+    await fetch("/api/ynwa/comments?event="+encodeURIComponent(lastData.eventId)+"&key="+encodeURIComponent(adminKey), { method:"DELETE" });
+  } catch(e){ /* best effort */ }
+  await loadComments();
+}
+
+async function postComment(eventId, parentId, name, email, text, website, renderedAt){
   if (!text || !text.trim() || !lastData || !lastData.ok) return;
   rememberIdentity(name, email);
   try{
     await fetch("/api/ynwa/comments", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ matchId: lastData.eventId, eventId: eventId, parentId: parentId, name: name, email: email, text: text }),
+      body: JSON.stringify({ matchId: lastData.eventId, eventId: eventId, parentId: parentId,
+        name: name, email: email, text: text, website: website, renderedAt: renderedAt }),
     });
   } catch(e){ /* best effort */ }
   await loadComments();
 }
+
+document.addEventListener("change", function(e){
+  if (e.target.classList && e.target.classList.contains("botCheckbox")){
+    var btn = document.getElementById("send-"+e.target.dataset.guards);
+    if (btn) btn.disabled = !e.target.checked;
+  }
+});
 
 document.addEventListener("click", function(e){
   var t = e.target;
@@ -1113,13 +1214,20 @@ document.addEventListener("click", function(e){
     if (box) box.classList.toggle("replyBox--open");
   } else if (t.dataset.sendEvent){
     var seq2 = t.dataset.sendEvent;
-    postComment(seq2, null, document.getElementById("cn-"+seq2).value, document.getElementById("ce-"+seq2).value, document.getElementById("ct-"+seq2).value);
+    postComment(seq2, null, document.getElementById("cn-"+seq2).value, document.getElementById("ce-"+seq2).value,
+      document.getElementById("ct-"+seq2).value, document.getElementById("hp-c"+seq2).value, document.getElementById("ra-c"+seq2).value);
   } else if (t.dataset.sendGeneral){
-    postComment(null, null, document.getElementById("gn").value, document.getElementById("ge").value, document.getElementById("gt").value);
+    postComment(null, null, document.getElementById("gn").value, document.getElementById("ge").value,
+      document.getElementById("gt").value, document.getElementById("hp-g").value, document.getElementById("ra-g").value);
   } else if (t.dataset.sendReply){
     var id = t.dataset.sendReply;
     var parent = comments.find(function(c){ return c.id === id; });
-    postComment(parent ? parent.eventId : null, id, document.getElementById("rn-"+id).value, document.getElementById("re-"+id).value, document.getElementById("rt-"+id).value);
+    postComment(parent ? parent.eventId : null, id, document.getElementById("rn-"+id).value, document.getElementById("re-"+id).value,
+      document.getElementById("rt-"+id).value, document.getElementById("hp-r"+id).value, document.getElementById("ra-r"+id).value);
+  } else if (t.dataset.deleteComment){
+    deleteComment(t.dataset.deleteComment);
+  } else if (t.dataset.deleteAll){
+    deleteAllComments();
   }
 });
 

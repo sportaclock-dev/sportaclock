@@ -43,6 +43,8 @@ const UPSTASH_TOKEN = cleanEnv(process.env.UPSTASH_REDIS_REST_TOKEN);
 
 const MAX_NAME = 40;
 const MAX_TEXT = 280;
+const MIN_SUBMIT_MS = 1500; // a real person needs at least this long to read + type
+const ADMIN_KEY = cleanEnv(process.env.ADMIN_KEY);
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /* Gravatar-style avatars, no accounts, no email ever stored.
@@ -110,6 +112,53 @@ function rateLimited(ip) {
   return hits.length > RATE_MAX;
 }
 
+/* Deletes one comment (plus any replies to it, cascading through any
+   depth) or, with no id given, everything for a match. Redis has no
+   "remove one element from a list by content" that's convenient here
+   (LREM needs an exact string match), so this reads the whole list,
+   filters in plain JS, and rewrites it — entirely fine at the volume a
+   small community actually produces. */
+async function deleteComments(matchId, idsToDelete) {
+  if (idsToDelete === null) {
+    await redisCommand(["DEL", keyFor(matchId)]);
+    return null;
+  }
+  const all = await getComments(matchId);
+  const toRemove = new Set(idsToDelete);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const c of all) {
+      if (!toRemove.has(c.id) && c.parentId && toRemove.has(c.parentId)) {
+        toRemove.add(c.id);
+        changed = true;
+      }
+    }
+  }
+  const remaining = all.filter((c) => !toRemove.has(c.id));
+  await redisCommand(["DEL", keyFor(matchId)]);
+  if (remaining.length) {
+    await redisCommand(["RPUSH", keyFor(matchId), ...remaining.map((c) => JSON.stringify(c))]);
+  }
+  return toRemove.size;
+}
+
+export async function commentsDelete(req, res) {
+  if (!ADMIN_KEY || req.query.key !== ADMIN_KEY) {
+    return res.status(403).json({ ok: false, reason: "Rangur eða enginn stjórnandalykill." });
+  }
+  const matchId = String(req.query.event || "").trim();
+  if (!matchId) return res.status(400).json({ ok: false, reason: "missing ?event=" });
+  try {
+    const id = req.query.id ? String(req.query.id) : null;
+    const deleted = await deleteComments(matchId, id ? [id] : null);
+    res.json({ ok: true, deleted });
+  } catch (err) {
+    console.error("[comments] delete failed:", err.message);
+    res.status(503).json({ ok: false, reason: err.message });
+  }
+}
+
 export async function commentsGet(req, res) {
   const matchId = String(req.query.event || "").trim();
   if (!matchId) return res.status(400).json({ ok: false, reason: "missing ?event=" });
@@ -129,6 +178,19 @@ export async function commentsPost(req, res) {
   }
 
   const body = req.body || {};
+
+  /* Two cheap anti-bot checks, re-validated here since anything checked
+     only in the browser is trivially skipped by posting to this endpoint
+     directly. Neither is named in the response — telling a script exactly
+     which trap it hit only helps it avoid that trap next time. */
+  if (String(body.website || "").trim()) {
+    return res.status(400).json({ ok: false, reason: "Ekki tókst að vista athugasemd." });
+  }
+  const renderedAt = Number(body.renderedAt);
+  if (!renderedAt || Date.now() - renderedAt < MIN_SUBMIT_MS) {
+    return res.status(400).json({ ok: false, reason: "Ekki tókst að vista athugasemd." });
+  }
+
   const matchId = String(body.matchId || "").trim();
   const text = String(body.text || "").trim().slice(0, MAX_TEXT);
   const name = String(body.name || "").trim().slice(0, MAX_NAME) || "Nafnlaus stuðningsmaður";

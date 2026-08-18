@@ -4,7 +4,7 @@ import { fileURLToPath } from "url";
 import nflRoute from "./nfl.js";
 import golfRoute from "./golf.js";
 import { ynwaApi, ynwaPage, ynwaProbe } from "./ynwa.js";
-import { commentsGet, commentsPost } from "./comments.js";
+import { commentsGet, commentsPost, commentsDelete } from "./comments.js";
 import { espnTry } from "./espn.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -459,6 +459,7 @@ app.get("/api/ynwa", ynwaApi);
 app.get("/api/ynwa/probe", ynwaProbe);
 app.get("/api/ynwa/comments", commentsGet);
 app.post("/api/ynwa/comments", commentsPost);
+app.delete("/api/ynwa/comments", commentsDelete);
 app.get("/ynwa", ynwaPage);
 
 // Serve the built frontend
