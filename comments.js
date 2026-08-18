@@ -23,12 +23,21 @@
    threaded replies without three separate structures.
    ============================================================ */
 
-// Trimmed defensively — a trailing space or newline from copy-pasting a
-// value out of a dashboard is invisible to the eye but breaks URL parsing
-// outright. Cheap to guard against, and exactly the kind of bug that looks
-// like a real config problem when it's actually a stray whitespace character.
-const UPSTASH_URL = (process.env.UPSTASH_REDIS_REST_URL || "").trim();
-const UPSTASH_TOKEN = (process.env.UPSTASH_REDIS_REST_TOKEN || "").trim();
+// Cleaned defensively: trimmed (a trailing space or newline from
+// copy-pasting a dashboard value is invisible but breaks URL parsing
+// outright) and stripped of surrounding quote marks (a very common
+// artifact of copying a value out of a .env-style snippet that displayed
+// it quoted, e.g. `URL="https://..."`, rather than the bare value).
+// Loops in case of more than one layer of either.
+function cleanEnv(v) {
+  let s = (v || "").trim();
+  while (s.length >= 2 && ((s[0] === '"' && s[s.length - 1] === '"') || (s[0] === "'" && s[s.length - 1] === "'"))) {
+    s = s.slice(1, -1).trim();
+  }
+  return s;
+}
+const UPSTASH_URL = cleanEnv(process.env.UPSTASH_REDIS_REST_URL);
+const UPSTASH_TOKEN = cleanEnv(process.env.UPSTASH_REDIS_REST_TOKEN);
 
 const MAX_NAME = 40;
 const MAX_TEXT = 280;
