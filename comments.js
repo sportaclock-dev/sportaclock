@@ -23,8 +23,12 @@
    threaded replies without three separate structures.
    ============================================================ */
 
-const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL;
-const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
+// Trimmed defensively — a trailing space or newline from copy-pasting a
+// value out of a dashboard is invisible to the eye but breaks URL parsing
+// outright. Cheap to guard against, and exactly the kind of bug that looks
+// like a real config problem when it's actually a stray whitespace character.
+const UPSTASH_URL = (process.env.UPSTASH_REDIS_REST_URL || "").trim();
+const UPSTASH_TOKEN = (process.env.UPSTASH_REDIS_REST_TOKEN || "").trim();
 
 const MAX_NAME = 40;
 const MAX_TEXT = 280;
@@ -35,6 +39,11 @@ const MAX_TEXT = 280;
 async function redisCommand(cmd) {
   if (!UPSTASH_URL || !UPSTASH_TOKEN) {
     throw new Error("No UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN set");
+  }
+  try {
+    new URL(UPSTASH_URL); // fetch()'s own parse error is cryptic — fail clearly first
+  } catch {
+    throw new Error(`UPSTASH_REDIS_REST_URL isn't a valid URL: "${UPSTASH_URL}"`);
   }
   const r = await fetch(UPSTASH_URL, {
     method: "POST",
