@@ -764,6 +764,33 @@ body.show-en .en{display:block}
 .diag code{color:var(--muted)}
 .empty{padding:22px 16px;text-align:center;color:var(--dim);font-size:.9rem;line-height:1.6;
   background:var(--panel);border:1px solid var(--line);border-radius:10px}
+
+/* ---------- comments ---------- */
+.commentToggle{margin-top:8px;padding:5px 10px;border:1px solid var(--line2);border-radius:16px;
+  background:none;color:var(--muted);font-size:.72rem;font-family:var(--sans);cursor:pointer}
+.commentToggle:hover{border-color:var(--red);color:var(--text)}
+.thread{margin-top:10px;padding-top:10px;border-top:1px dashed var(--line2)}
+.comment{padding:8px 10px;background:var(--panel);border:1px solid var(--line);border-radius:8px;
+  margin-bottom:6px}
+.comment.reply{margin-left:20px;background:#1A1A1E}
+.cMeta{display:flex;justify-content:space-between;font-size:.66rem;color:var(--dim);margin-bottom:3px}
+.cMeta b{color:var(--text)}
+.comment p{font-size:.82rem;line-height:1.42;margin:0}
+.replyBtn{margin-top:4px;background:none;border:none;color:var(--red);font-size:.68rem;
+  cursor:pointer;padding:0;font-family:var(--sans)}
+.replyBox{display:none;gap:6px;margin-top:6px}
+.replyBox--open{display:flex}
+.replyBox input{flex:1}
+.composer{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.composer input{flex:1;min-width:80px}
+.composer button, .replyBox button{padding:7px 12px;border-radius:7px;border:none;
+  background:var(--red);color:#fff;font-size:.78rem;cursor:pointer;font-family:var(--sans)}
+.input{padding:7px 9px;border-radius:7px;background:var(--bg);border:1px solid var(--line);
+  color:var(--text);font-size:.8rem;font-family:var(--sans)}
+.input::placeholder{color:var(--faint)}
+#generalComments{margin-top:20px;padding-top:16px;border-top:1px solid var(--line2)}
+#generalComments .colHead{font-size:.7rem;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--muted);margin-bottom:8px}
 footer{margin-top:34px;padding-top:14px;border-top:1px solid var(--line);
   color:var(--faint);font-size:.68rem;line-height:1.7}
 @media (max-width:520px){.row{grid-template-columns:44px 1fr;gap:10px}}
@@ -788,6 +815,7 @@ footer{margin-top:34px;padding-top:14px;border-top:1px solid var(--line);
   <p class="note" id="diag"></p>
 
   <div class="feed" id="feed"></div>
+  <div id="generalComments"></div>
 
   <footer>
     <p><strong>YNWA</strong> — tilraun. Lýsingin er búin til sjálfvirkt úr
@@ -823,6 +851,7 @@ function stateLabel(h, d){
 }
 
 function render(d){
+  lastData = d;
   const scoreEl = document.getElementById("score");
   const feedEl = document.getElementById("feed");
   const statusEl = document.getElementById("status");
@@ -881,15 +910,7 @@ function render(d){
       : '<div class="empty">Lýsingin byrjar þegar flautað er til leiks.'
         + '<br><span style="color:#4A4A53">Atburðir birtast hér sjálfkrafa.</span></div>';
   } else {
-    feedEl.innerHTML = d.feed.map(function(f){
-      const cls = "row" + (f.big?" big":"") + (f.kind==="info"?" info":"")
-        + (f.known?"":" unknown");
-      return '<div class="'+cls+'">'
-        + '<div class="min">'+(f.clock||"")+'</div>'
-        + '<div><div class="txt">'+esc(f.is)+'</div>'
-        + (f.known ? "" : '<div class="kind">óþýtt: '+esc(f.kind)+'</div>')
-        + '<div class="en">'+esc(f.en)+'</div></div></div>';
-    }).join("");
+    feedEl.innerHTML = d.feed.map(renderFeedRow).join("");
   }
 
   const t = clock24(new Date(d.fetchedAt));
@@ -929,10 +950,122 @@ function startCountdown(iso){
 function esc(s){ return String(s==null?"":s)
   .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
 
+/* ---------- comments ----------
+   One flat list from the server; a comment's eventId links it to a
+   feed line by that line's own "seq" (ESPN's own stable sequence
+   number), and parentId links a reply to another comment. Both
+   nullable, so general chat / event-linked comments / threaded
+   replies all come out of the same list without three data shapes. */
+var comments = [];
+var openThreads = new Set();
+var lastData = null;
+
+function commentsForEvent(seq){ return comments.filter(function(c){ return c.eventId === String(seq); }); }
+function generalComments(){ return comments.filter(function(c){ return c.eventId == null; }); }
+function repliesTo(id){ return comments.filter(function(c){ return c.parentId === id; }); }
+function topLevel(list){ return list.filter(function(c){ return c.parentId == null; }); }
+
+function commentHtml(c, depth){
+  return '<div class="comment'+(depth?' reply':'')+'">'
+    + '<div class="cMeta"><b>'+esc(c.name)+'</b><span>'+clock24(new Date(c.at))+'</span></div>'
+    + '<p>'+esc(c.text)+'</p>'
+    + (depth===0 ? '<button class="replyBtn" data-reply="'+c.id+'">svara</button>'
+      + '<div class="replyBox" id="replyBox-'+c.id+'">'
+        + '<input class="input" placeholder="Nafn" id="rn-'+c.id+'">'
+        + '<input class="input" placeholder="Svar…" id="rt-'+c.id+'">'
+        + '<button data-send-reply="'+c.id+'">Senda</button></div>' : '')
+    + repliesTo(c.id).map(function(r){ return commentHtml(r, depth+1); }).join("")
+    + '</div>';
+}
+
+function threadHtml(seq){
+  var top = topLevel(commentsForEvent(seq));
+  return '<div class="thread">'
+    + top.map(function(c){ return commentHtml(c, 0); }).join("")
+    + '<div class="composer">'
+      + '<input class="input" placeholder="Nafn" id="cn-'+seq+'">'
+      + '<input class="input" placeholder="Skrifaðu athugasemd…" id="ct-'+seq+'">'
+      + '<button data-send-event="'+seq+'">Senda</button></div></div>';
+}
+
+function renderFeedRow(f){
+  var cls = "row" + (f.big?" big":"") + (f.kind==="info"?" info":"") + (f.known?"":" unknown");
+  var seq = f.seq, count = commentsForEvent(seq).length, open = openThreads.has(String(seq));
+  return '<div class="'+cls+'">'
+    + '<div class="min">'+(f.clock||"")+'</div>'
+    + '<div><div class="txt">'+esc(f.is)+'</div>'
+    + (f.known ? "" : '<div class="kind">óþýtt: '+esc(f.kind)+'</div>')
+    + '<div class="en">'+esc(f.en)+'</div>'
+    + '<button class="commentToggle" data-toggle="'+seq+'">💬 '+(count||"Skrifa")+'</button>'
+    + (open ? threadHtml(seq) : '')
+    + '</div></div>';
+}
+
+function renderGeneral(){
+  var el = document.getElementById("generalComments");
+  if (!el) return;
+  var top = topLevel(generalComments());
+  el.innerHTML = '<h3 class="colHead">Spjall</h3>'
+    + top.map(function(c){ return commentHtml(c, 0); }).join("")
+    + '<div class="composer">'
+      + '<input class="input" placeholder="Nafn" id="gn">'
+      + '<input class="input" placeholder="Skrifaðu athugasemd…" id="gt">'
+      + '<button data-send-general="1">Senda</button></div>';
+}
+
+function reRenderAll(){
+  if (lastData && lastData.ok && lastData.feed){
+    document.getElementById("feed").innerHTML = lastData.feed.map(renderFeedRow).join("");
+  }
+  renderGeneral();
+}
+
+async function loadComments(){
+  if (!lastData || !lastData.ok) return;
+  try{
+    const r = await fetch("/api/ynwa/comments?event="+encodeURIComponent(lastData.eventId), { cache:"no-store" });
+    const j = await r.json();
+    if (j.ok){ comments = j.comments; reRenderAll(); }
+  } catch(e){ /* comments are a nice-to-have, not core — fail silently */ }
+}
+
+async function postComment(eventId, parentId, name, text){
+  if (!text || !text.trim() || !lastData || !lastData.ok) return;
+  try{
+    await fetch("/api/ynwa/comments", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ matchId: lastData.eventId, eventId: eventId, parentId: parentId, name: name, text: text }),
+    });
+  } catch(e){ /* best effort */ }
+  await loadComments();
+}
+
+document.addEventListener("click", function(e){
+  var t = e.target;
+  if (t.dataset.toggle){
+    var seq = t.dataset.toggle;
+    if (openThreads.has(seq)) openThreads.delete(seq); else openThreads.add(seq);
+    reRenderAll();
+  } else if (t.dataset.reply){
+    var box = document.getElementById("replyBox-"+t.dataset.reply);
+    if (box) box.classList.toggle("replyBox--open");
+  } else if (t.dataset.sendEvent){
+    var seq2 = t.dataset.sendEvent;
+    postComment(seq2, null, document.getElementById("cn-"+seq2).value, document.getElementById("ct-"+seq2).value);
+  } else if (t.dataset.sendGeneral){
+    postComment(null, null, document.getElementById("gn").value, document.getElementById("gt").value);
+  } else if (t.dataset.sendReply){
+    var id = t.dataset.sendReply;
+    var parent = comments.find(function(c){ return c.id === id; });
+    postComment(parent ? parent.eventId : null, id, document.getElementById("rn-"+id).value, document.getElementById("rt-"+id).value);
+  }
+});
+
 async function load(){
   try{
     const r = await fetch(api, { cache:"no-store" });
     render(await r.json());
+    loadComments();
   } catch(e){
     document.getElementById("status").textContent = "tenging brást — reyni aftur";
     clearTimeout(timer); timer = setTimeout(load, 15000);

@@ -4,10 +4,16 @@ import { fileURLToPath } from "url";
 import nflRoute from "./nfl.js";
 import golfRoute from "./golf.js";
 import { ynwaApi, ynwaPage, ynwaProbe } from "./ynwa.js";
+import { commentsGet, commentsPost } from "./comments.js";
 import { espnTry } from "./espn.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
+// Railway sits behind a reverse proxy — without this, req.ip would be the
+// proxy's address for every request, making the comment rate-limiter
+// (which keys off req.ip) useless.
+app.set("trust proxy", true);
+app.use(express.json({ limit: "8kb" })); // small cap — comments are short by design
 const PORT = process.env.PORT || 3000;
 const TOKEN = process.env.FOOTBALL_DATA_TOKEN;
 
@@ -451,6 +457,8 @@ app.get("/api/golf", golfRoute);
 // Registered before the SPA catch-all so /ynwa serves its own page.
 app.get("/api/ynwa", ynwaApi);
 app.get("/api/ynwa/probe", ynwaProbe);
+app.get("/api/ynwa/comments", commentsGet);
+app.post("/api/ynwa/comments", commentsPost);
 app.get("/ynwa", ynwaPage);
 
 // Serve the built frontend
