@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 /* ============================================================
    comments.js — live comments for YNWA, backed by Upstash Redis.
 
@@ -41,6 +43,21 @@ const UPSTASH_TOKEN = cleanEnv(process.env.UPSTASH_REDIS_REST_TOKEN);
 
 const MAX_NAME = 40;
 const MAX_TEXT = 280;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/* Gravatar-style avatars, no accounts, no email ever stored.
+   The email is hashed the instant it arrives and discarded — only the
+   hash reaches storage. Anyone with a real Gravatar gets their actual
+   photo; everyone else gets a stable, distinct pattern generated from
+   their name instead (Gravatar's "identicon" fallback), so nobody is
+   left with a blank space just for not having an account. */
+function md5(s) { return createHash("md5").update(s).digest("hex"); }
+
+function avatarHashFor(email, name) {
+  const e = String(email || "").trim().toLowerCase();
+  if (EMAIL_RE.test(e)) return { hash: md5(e), fallback: "mp" };       // real email → maybe a real photo
+  return { hash: md5(name.toLowerCase()), fallback: "identicon" };      // no email → a stable pattern from the name
+}
 
 /* Sent as a POST with a JSON array body (not URL path segments) so
    Icelandic characters and punctuation never need manual encoding —
@@ -122,9 +139,14 @@ export async function commentsPost(req, res) {
     return res.status(400).json({ ok: false, reason: "matchId and text are required" });
   }
 
+  // The raw email lives only in this one line, for the moment it takes to
+  // hash it. It is never assigned to `comment`, never logged, never sent
+  // back in a response — only avatarHash/avatarFallback are.
+  const { hash: avatarHash, fallback: avatarFallback } = avatarHashFor(body.email, name);
+
   const comment = {
     id: "c" + Date.now() + Math.random().toString(36).slice(2, 8),
-    matchId, eventId, parentId, name, text,
+    matchId, eventId, parentId, name, text, avatarHash, avatarFallback,
     at: new Date().toISOString(),
   };
 

@@ -773,21 +773,24 @@ body.show-en .en{display:block}
 .comment{padding:8px 10px;background:var(--panel);border:1px solid var(--line);border-radius:8px;
   margin-bottom:6px}
 .comment.reply{margin-left:20px;background:#1A1A1E}
-.cMeta{display:flex;justify-content:space-between;font-size:.66rem;color:var(--dim);margin-bottom:3px}
-.cMeta b{color:var(--text)}
+.cMeta{display:flex;align-items:center;gap:7px;font-size:.66rem;color:var(--dim);margin-bottom:3px}
+.cMeta b{color:var(--text);flex:1}
+.avatar{width:20px;height:20px;border-radius:50%;object-fit:cover;flex:none;background:var(--line)}
 .comment p{font-size:.82rem;line-height:1.42;margin:0}
 .replyBtn{margin-top:4px;background:none;border:none;color:var(--red);font-size:.68rem;
   cursor:pointer;padding:0;font-family:var(--sans)}
-.replyBox{display:none;gap:6px;margin-top:6px}
+.replyBox{display:none;flex-direction:column;gap:6px;margin-top:8px}
 .replyBox--open{display:flex}
-.replyBox input{flex:1}
-.composer{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
-.composer input{flex:1;min-width:80px}
-.composer button, .replyBox button{padding:7px 12px;border-radius:7px;border:none;
+.composer{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+.composerIdentity{display:flex;gap:6px;flex-wrap:wrap}
+.composerIdentity input{flex:1;min-width:110px}
+.composer button, .replyBox button{align-self:flex-end;padding:7px 14px;border-radius:7px;border:none;
   background:var(--red);color:#fff;font-size:.78rem;cursor:pointer;font-family:var(--sans)}
 .input{padding:7px 9px;border-radius:7px;background:var(--bg);border:1px solid var(--line);
   color:var(--text);font-size:.8rem;font-family:var(--sans)}
 .input::placeholder{color:var(--faint)}
+.textarea{width:100%;resize:vertical;min-height:64px;line-height:1.4}
+.textarea--reply{min-height:44px}
 #generalComments{margin-top:20px;padding-top:16px;border-top:1px solid var(--line2)}
 #generalComments .colHead{font-size:.7rem;letter-spacing:.14em;text-transform:uppercase;
   color:var(--muted);margin-bottom:8px}
@@ -955,7 +958,14 @@ function esc(s){ return String(s==null?"":s)
    feed line by that line's own "seq" (ESPN's own stable sequence
    number), and parentId links a reply to another comment. Both
    nullable, so general chat / event-linked comments / threaded
-   replies all come out of the same list without three data shapes. */
+   replies all come out of the same list without three data shapes.
+
+   matchId (sent as the "event" the whole page is fetching) is really
+   just an opaque content id as far as storage is concerned — nothing
+   here assumes it's specifically an ESPN match. Whenever there's a
+   real article/match-report feature, giving it its own comment thread
+   is just passing that content's own id through the same functions
+   below — no rework, just a different id going into the same shape. */
 var comments = [];
 var openThreads = new Set();
 var lastData = null;
@@ -965,14 +975,41 @@ function generalComments(){ return comments.filter(function(c){ return c.eventId
 function repliesTo(id){ return comments.filter(function(c){ return c.parentId === id; }); }
 function topLevel(list){ return list.filter(function(c){ return c.parentId == null; }); }
 
+// No accounts — so a name+email typed once is remembered on THIS browser
+// only, and quietly refilled next time, rather than asking regulars to
+// retype it every single comment.
+function rememberedIdentity(){
+  try { var raw = localStorage.getItem("ynwa:me"); if (raw) return JSON.parse(raw); } catch(e){}
+  return { name:"", email:"" };
+}
+function rememberIdentity(name, email){
+  try { localStorage.setItem("ynwa:me", JSON.stringify({ name: name||"", email: email||"" })); } catch(e){}
+}
+
+// A real Gravatar-registered photo if the person has one; otherwise a
+// stable, distinct pattern generated from their name — nobody gets a
+// blank space just for not having an account.
+function avatarHtml(c){
+  if (!c.avatarHash) return "";
+  var url = "https://www.gravatar.com/avatar/"+c.avatarHash+"?d="+(c.avatarFallback||"identicon")+"&s=64";
+  return '<img class="avatar" src="'+url+'" alt="">';
+}
+
+function identityFieldsHtml(nameId, emailId){
+  var me = rememberedIdentity();
+  return '<div class="composerIdentity">'
+    + '<input class="input" placeholder="Nafn" id="'+nameId+'" value="'+esc(me.name)+'">'
+    + '<input class="input" placeholder="Netfang (valfrjálst — birtist ekki, notað fyrir mynd)" id="'+emailId+'" value="'+esc(me.email)+'"></div>';
+}
+
 function commentHtml(c, depth){
   return '<div class="comment'+(depth?' reply':'')+'">'
-    + '<div class="cMeta"><b>'+esc(c.name)+'</b><span>'+clock24(new Date(c.at))+'</span></div>'
+    + '<div class="cMeta">'+avatarHtml(c)+'<b>'+esc(c.name)+'</b><span>'+clock24(new Date(c.at))+'</span></div>'
     + '<p>'+esc(c.text)+'</p>'
     + (depth===0 ? '<button class="replyBtn" data-reply="'+c.id+'">svara</button>'
       + '<div class="replyBox" id="replyBox-'+c.id+'">'
-        + '<input class="input" placeholder="Nafn" id="rn-'+c.id+'">'
-        + '<input class="input" placeholder="Svar…" id="rt-'+c.id+'">'
+        + identityFieldsHtml("rn-"+c.id, "re-"+c.id)
+        + '<textarea class="input textarea textarea--reply" placeholder="Svar…" id="rt-'+c.id+'" rows="2"></textarea>'
         + '<button data-send-reply="'+c.id+'">Senda</button></div>' : '')
     + repliesTo(c.id).map(function(r){ return commentHtml(r, depth+1); }).join("")
     + '</div>';
@@ -983,8 +1020,8 @@ function threadHtml(seq){
   return '<div class="thread">'
     + top.map(function(c){ return commentHtml(c, 0); }).join("")
     + '<div class="composer">'
-      + '<input class="input" placeholder="Nafn" id="cn-'+seq+'">'
-      + '<input class="input" placeholder="Skrifaðu athugasemd…" id="ct-'+seq+'">'
+      + identityFieldsHtml("cn-"+seq, "ce-"+seq)
+      + '<textarea class="input textarea" placeholder="Skrifaðu athugasemd…" id="ct-'+seq+'" rows="3"></textarea>'
       + '<button data-send-event="'+seq+'">Senda</button></div></div>';
 }
 
@@ -1005,13 +1042,21 @@ function renderGeneral(){
   var el = document.getElementById("generalComments");
   if (!el) return;
   var top = topLevel(generalComments());
-  el.innerHTML = '<h3 class="colHead">Spjall</h3>'
+  // Named explicitly after the match on screen, rather than a generic
+  // floating "Spjall" — the whole point was that this should read as
+  // clearly connected to what's actually showing, not a separate feature.
+  var label = "Spjall";
+  if (lastData && lastData.header) {
+    label = "Spjall um " + lastData.header.home.short + " – " + lastData.header.away.short;
+  }
+  el.innerHTML = '<h3 class="colHead">'+esc(label)+'</h3>'
     + top.map(function(c){ return commentHtml(c, 0); }).join("")
     + '<div class="composer">'
-      + '<input class="input" placeholder="Nafn" id="gn">'
-      + '<input class="input" placeholder="Skrifaðu athugasemd…" id="gt">'
+      + identityFieldsHtml("gn", "ge")
+      + '<textarea class="input textarea" placeholder="Skrifaðu athugasemd…" id="gt" rows="3"></textarea>'
       + '<button data-send-general="1">Senda</button></div>';
 }
+
 
 function reRenderAll(){
   if (lastData && lastData.ok && lastData.feed){
@@ -1036,17 +1081,22 @@ async function loadComments(){
 // failure says so, with the actual reason (a misconfigured Upstash token
 // shows up here directly, rather than as an empty div).
 function commentsErrorHtml(reason){
-  return '<h3 class="colHead">Spjall</h3>'
+  var label = "Spjall";
+  if (lastData && lastData.header) {
+    label = "Spjall um " + lastData.header.home.short + " – " + lastData.header.away.short;
+  }
+  return '<h3 class="colHead">'+esc(label)+'</h3>'
     + '<p style="color:#4A4A53;font-size:.8rem">Næ ekki í athugasemdir í augnablikinu'
     + (reason ? ' — ' + esc(reason) : '') + '.</p>';
 }
 
-async function postComment(eventId, parentId, name, text){
+async function postComment(eventId, parentId, name, email, text){
   if (!text || !text.trim() || !lastData || !lastData.ok) return;
+  rememberIdentity(name, email);
   try{
     await fetch("/api/ynwa/comments", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ matchId: lastData.eventId, eventId: eventId, parentId: parentId, name: name, text: text }),
+      body: JSON.stringify({ matchId: lastData.eventId, eventId: eventId, parentId: parentId, name: name, email: email, text: text }),
     });
   } catch(e){ /* best effort */ }
   await loadComments();
@@ -1063,13 +1113,13 @@ document.addEventListener("click", function(e){
     if (box) box.classList.toggle("replyBox--open");
   } else if (t.dataset.sendEvent){
     var seq2 = t.dataset.sendEvent;
-    postComment(seq2, null, document.getElementById("cn-"+seq2).value, document.getElementById("ct-"+seq2).value);
+    postComment(seq2, null, document.getElementById("cn-"+seq2).value, document.getElementById("ce-"+seq2).value, document.getElementById("ct-"+seq2).value);
   } else if (t.dataset.sendGeneral){
-    postComment(null, null, document.getElementById("gn").value, document.getElementById("gt").value);
+    postComment(null, null, document.getElementById("gn").value, document.getElementById("ge").value, document.getElementById("gt").value);
   } else if (t.dataset.sendReply){
     var id = t.dataset.sendReply;
     var parent = comments.find(function(c){ return c.id === id; });
-    postComment(parent ? parent.eventId : null, id, document.getElementById("rn-"+id).value, document.getElementById("rt-"+id).value);
+    postComment(parent ? parent.eventId : null, id, document.getElementById("rn-"+id).value, document.getElementById("re-"+id).value, document.getElementById("rt-"+id).value);
   }
 });
 
