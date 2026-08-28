@@ -789,9 +789,9 @@ body.show-en .en{display:block}
 .composer button, .replyBox button{align-self:flex-end;padding:7px 14px;border-radius:7px;border:none;
   background:var(--red);color:#fff;font-size:.78rem;cursor:pointer;font-family:var(--sans)}
 .input{padding:7px 9px;border-radius:7px;background:var(--bg);border:1px solid var(--line);
-  color:var(--text);font-size:.8rem;font-family:var(--sans)}
+  color:var(--text);font-size:16px;font-family:var(--sans)}
 .input::placeholder{color:var(--faint)}
-.textarea{width:100%;resize:vertical;min-height:64px;line-height:1.4}
+.textarea{width:100%;resize:vertical;min-height:64px;line-height:1.4;font-size:16px}
 .textarea--reply{min-height:44px}
 .hp{position:absolute;left:-9999px;width:1px;height:1px;opacity:0}
 .botCheck{display:flex;align-items:center;gap:6px;font-size:.76rem;color:var(--dim);cursor:pointer}
@@ -801,7 +801,7 @@ body.show-en .en{display:block}
 .adminWipe{display:block;margin-bottom:10px;padding:5px 10px;border:1px solid #4A1420;
   border-radius:6px;color:var(--red);font-size:.68rem;font-family:var(--sans);background:none;cursor:pointer}
 .adminWipe:hover{background:rgba(200,16,46,.1)}
-#generalComments{margin-top:20px;padding-top:16px;border-top:1px solid var(--line2)}
+#generalComments{margin-top:16px;padding-bottom:16px;border-bottom:1px solid var(--line2)}
 #generalComments .colHead{font-size:.7rem;letter-spacing:.14em;text-transform:uppercase;
   color:var(--muted);margin-bottom:8px}
 footer{margin-top:34px;padding-top:14px;border-top:1px solid var(--line);
@@ -827,8 +827,8 @@ footer{margin-top:34px;padding-top:14px;border-top:1px solid var(--line);
   </div>
   <p class="note" id="diag"></p>
 
-  <div class="feed" id="feed"></div>
   <div id="generalComments"></div>
+  <div class="feed" id="feed"></div>
 
   <footer>
     <p><strong>YNWA</strong> — tilraun. Lýsingin er búin til sjálfvirkt úr
@@ -873,6 +873,14 @@ function stateLabel(h, d){
 // who's been typing for 10 seconds doesn't get flagged as submitting
 // impossibly fast just because a poll happened to reset the clock under
 // them mid-sentence.
+//
+// Restoring the VALUE isn't enough on its own, though — innerHTML
+// replacement destroys the actual DOM node, so even with the text
+// carried over, the cursor and focus are gone, and typing stops dead
+// until the person taps back into the box. So this also remembers WHICH
+// field had focus and exactly where the cursor was, and puts both back
+// after the rebuild — the whole point being that a poll landing
+// mid-sentence should be invisible, not just non-destructive.
 function snapshotComposers(){
   var snap = {};
   document.querySelectorAll(
@@ -881,15 +889,33 @@ function snapshotComposers(){
     if (!el.id) return;
     snap[el.id] = (el.type === "checkbox") ? el.checked : el.value;
   });
+  var active = document.activeElement;
+  if (active && active.id && snap.hasOwnProperty(active.id)){
+    snap.__focusId = active.id;
+    if (typeof active.selectionStart === "number"){
+      snap.__selStart = active.selectionStart;
+      snap.__selEnd = active.selectionEnd;
+    }
+  }
   return snap;
 }
 function restoreComposers(snap){
   Object.keys(snap).forEach(function(id){
+    if (id.indexOf("__") === 0) return;
     var el = document.getElementById(id);
     if (!el) return;
     if (el.type === "checkbox") el.checked = snap[id];
     else el.value = snap[id];
   });
+  if (snap.__focusId){
+    var focusEl = document.getElementById(snap.__focusId);
+    if (focusEl){
+      focusEl.focus();
+      if (typeof snap.__selStart === "number" && focusEl.setSelectionRange){
+        try { focusEl.setSelectionRange(snap.__selStart, snap.__selEnd); } catch(e){}
+      }
+    }
+  }
 }
 
 function render(d){
@@ -1183,15 +1209,25 @@ async function deleteAllComments(){
   await loadComments();
 }
 
-async function postComment(eventId, parentId, name, email, text, website, renderedAt){
+async function postComment(eventId, parentId, name, email, textElId, website, renderedAt){
+  var textEl = document.getElementById(textElId);
+  var text = textEl ? textEl.value : "";
   if (!text || !text.trim() || !lastData || !lastData.ok) return;
   rememberIdentity(name, email);
   try{
-    await fetch("/api/ynwa/comments", {
+    var res = await fetch("/api/ynwa/comments", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ matchId: lastData.eventId, eventId: eventId, parentId: parentId,
         name: name, email: email, text: text, website: website, renderedAt: renderedAt }),
     });
+    var j = await res.json();
+    // Only clear on a CONFIRMED success — if this was rejected (rate
+    // limited, bot-check, network hiccup), leave what they wrote so
+    // nothing is lost. And clear it right here, before loadComments()
+    // rebuilds anything — otherwise the snapshot/restore that protects
+    // in-progress typing would just as faithfully bring the just-sent
+    // text straight back.
+    if (j && j.ok && textEl) textEl.value = "";
   } catch(e){ /* best effort */ }
   await loadComments();
 }
@@ -1215,15 +1251,15 @@ document.addEventListener("click", function(e){
   } else if (t.dataset.sendEvent){
     var seq2 = t.dataset.sendEvent;
     postComment(seq2, null, document.getElementById("cn-"+seq2).value, document.getElementById("ce-"+seq2).value,
-      document.getElementById("ct-"+seq2).value, document.getElementById("hp-c"+seq2).value, document.getElementById("ra-c"+seq2).value);
+      "ct-"+seq2, document.getElementById("hp-c"+seq2).value, document.getElementById("ra-c"+seq2).value);
   } else if (t.dataset.sendGeneral){
     postComment(null, null, document.getElementById("gn").value, document.getElementById("ge").value,
-      document.getElementById("gt").value, document.getElementById("hp-g").value, document.getElementById("ra-g").value);
+      "gt", document.getElementById("hp-g").value, document.getElementById("ra-g").value);
   } else if (t.dataset.sendReply){
     var id = t.dataset.sendReply;
     var parent = comments.find(function(c){ return c.id === id; });
     postComment(parent ? parent.eventId : null, id, document.getElementById("rn-"+id).value, document.getElementById("re-"+id).value,
-      document.getElementById("rt-"+id).value, document.getElementById("hp-r"+id).value, document.getElementById("ra-r"+id).value);
+      "rt-"+id, document.getElementById("hp-r"+id).value, document.getElementById("ra-r"+id).value);
   } else if (t.dataset.deleteComment){
     deleteComment(t.dataset.deleteComment);
   } else if (t.dataset.deleteAll){
