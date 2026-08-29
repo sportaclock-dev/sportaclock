@@ -337,12 +337,22 @@ const TEMPLATES = {
 
   "shot-on-target": (ev) => {
     const k = keeperFrom(ev.text);
-    return `Skot á markið — ${who(ev)} (${team(ev)}).` +
+    const a = who(ev, 1);
+    return `${who(ev)} (${team(ev)}) skýtur á markið` + (a ? ` eftir sendingu frá ${a}` : "") + "." +
       (k ? ` ${k} ver.` : " Markvörðurinn ver.");
   },
-  "shot-off-target": (ev) => `Skot framhjá — ${who(ev)} (${team(ev)}).`,
-  "shot-blocked": (ev) => `Skot í varnarmann — ${who(ev)} (${team(ev)}).`,
-  "shot-woodwork": (ev) => `Í stöngina! ${who(ev)} (${team(ev)}).`,
+  "shot-off-target": (ev) => {
+    const a = who(ev, 1);
+    return `${who(ev)} (${team(ev)}) skýtur framhjá` + (a ? ` eftir sendingu frá ${a}` : "") + ".";
+  },
+  "shot-blocked": (ev) => {
+    const a = who(ev, 1);
+    return `${who(ev)} (${team(ev)}) skýtur en varnarmaður blokkar` + (a ? ` eftir sendingu frá ${a}` : "") + ".";
+  },
+  "shot-woodwork": (ev) => {
+    const a = who(ev, 1);
+    return `${who(ev)} (${team(ev)}) skýtur í stöngina` + (a ? ` eftir sendingu frá ${a}` : "") + ".";
+  },
 
   foul: (ev) => `Brot — ${who(ev)} (${team(ev)}).`,
   offside: (ev) => `Rangstaða — ${team(ev)}.`,
