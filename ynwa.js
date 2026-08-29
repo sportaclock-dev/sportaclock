@@ -801,9 +801,35 @@ body.show-en .en{display:block}
 .adminWipe{display:block;margin-bottom:10px;padding:5px 10px;border:1px solid #4A1420;
   border-radius:6px;color:var(--red);font-size:.68rem;font-family:var(--sans);background:none;cursor:pointer}
 .adminWipe:hover{background:rgba(200,16,46,.1)}
-#generalComments{margin-top:16px;padding-bottom:16px;border-bottom:1px solid var(--line2)}
-#generalComments .colHead{font-size:.7rem;letter-spacing:.14em;text-transform:uppercase;
+#chat{margin-top:20px;padding-top:16px;border-top:1px solid var(--line2)}
+#chat .colHead{font-size:.7rem;letter-spacing:.14em;text-transform:uppercase;
   color:var(--muted);margin-bottom:8px}
+.chatEmpty{color:var(--faint);font-size:.82rem;padding:6px 0}
+
+/* One "show everything" control under the 5-event preview, so the live
+   ticker stays short without hiding the match history. */
+.showAllBtn{display:none;width:100%;margin-top:8px;padding:9px;border-radius:8px;
+  border:1px dashed var(--line2);background:none;color:var(--muted);
+  font-size:.78rem;font-family:var(--sans);cursor:pointer}
+.showAllBtn:hover{border-color:var(--red);color:var(--text)}
+
+/* The composer only exists when opened, so it gets a clear frame to
+   show it's a distinct, temporary thing rather than page furniture. */
+.newCommentBtn{width:100%;padding:10px;margin-bottom:10px;border-radius:8px;
+  border:1px solid var(--line2);background:var(--panel);color:var(--text);
+  font-size:.82rem;font-weight:600;font-family:var(--sans);cursor:pointer}
+.newCommentBtn:hover{border-color:var(--red)}
+.composer{border:1px solid var(--red);border-radius:9px;padding:10px;margin-bottom:12px;
+  background:var(--panel);display:flex;flex-direction:column;gap:6px}
+.composerTag{font-size:.7rem;color:var(--red);font-weight:600;padding-bottom:2px}
+.composerActions{display:flex;gap:8px;justify-content:flex-end;align-items:center}
+.btnGhostSmall{padding:7px 12px;border-radius:7px;border:1px solid var(--line2);
+  background:none;color:var(--muted);font-size:.78rem;font-family:var(--sans);cursor:pointer}
+.btnGhostSmall:hover{color:var(--text)}
+/* A comment keeps a visible link to the moment it was about, even
+   though it no longer lives inside the feed. */
+.commentEventTag{font-size:.68rem;color:var(--dim);border-left:2px solid var(--red);
+  padding-left:6px;margin-bottom:5px;line-height:1.3}
 footer{margin-top:34px;padding-top:14px;border-top:1px solid var(--line);
   color:var(--faint);font-size:.68rem;line-height:1.7}
 @media (max-width:520px){.row{grid-template-columns:44px 1fr;gap:10px}}
@@ -822,13 +848,15 @@ footer{margin-top:34px;padding-top:14px;border-top:1px solid var(--line);
 
   <div class="bar">
     <button class="btn" id="toggleEn">Sýna enska textann</button>
+    <button class="btn" id="toggleChat">Spjall</button>
     <button class="btn" id="refresh">Uppfæra núna</button>
     <span class="note" id="status"></span>
   </div>
   <p class="note" id="diag"></p>
 
-  <div id="generalComments"></div>
   <div class="feed" id="feed"></div>
+  <button class="showAllBtn" id="showAll"></button>
+  <div id="chat"></div>
 
   <footer>
     <p><strong>YNWA</strong> — tilraun. Lýsingin er búin til sjálfvirkt úr
@@ -916,6 +944,12 @@ function restoreComposers(snap){
       }
     }
   }
+  // The Send button's enabled state is derived from the checkbox, not
+  // stored on the button — so restoring the checkbox alone would leave
+  // Send stuck disabled after a poll. Re-derive it here.
+  var cb = document.getElementById("c-bot");
+  var sendBtn = document.getElementById("send-x");
+  if (cb && sendBtn) sendBtn.disabled = !cb.checked;
 }
 
 function render(d){
@@ -1037,7 +1071,6 @@ function esc(s){ return String(s==null?"":s)
    is just passing that content's own id through the same functions
    below — no rework, just a different id going into the same shape. */
 var comments = [];
-var openThreads = new Set();
 var lastData = null;
 // A secret key of the admin's own choosing (set as ADMIN_KEY on the
 // server), attached only when THEY open the page with it. Nobody else
@@ -1047,9 +1080,20 @@ var lastData = null;
 var adminKey = new URLSearchParams(location.search).get("admin") || "";
 
 function commentsForEvent(seq){ return comments.filter(function(c){ return c.eventId === String(seq); }); }
-function generalComments(){ return comments.filter(function(c){ return c.eventId == null; }); }
 function repliesTo(id){ return comments.filter(function(c){ return c.parentId === id; }); }
 function topLevel(list){ return list.filter(function(c){ return c.parentId == null; }); }
+
+// Which comment/event the on-demand composer is currently aimed at.
+// null target = a general comment; a seq = tagged to that feed moment;
+// replyTo = a reply to another comment. Only ONE composer exists at a
+// time anywhere on the page, which is what keeps the chat clean by
+// default rather than showing a box under every single item.
+var composer = null; // { eventId, parentId } or null when closed
+var showAllEvents = false;
+var chatOpen = true;
+try { chatOpen = localStorage.getItem("ynwa:chat") !== "off"; } catch(e){}
+
+var FEED_PREVIEW_COUNT = 5;
 
 // No accounts — so a name+email typed once is remembered on THIS browser
 // only, and quietly refilled next time, rather than asking regulars to
@@ -1071,13 +1115,6 @@ function avatarHtml(c){
   return '<img class="avatar" src="'+url+'" alt="">';
 }
 
-function identityFieldsHtml(nameId, emailId){
-  var me = rememberedIdentity();
-  return '<div class="composerIdentity">'
-    + '<input class="input" placeholder="Nafn" id="'+nameId+'" value="'+esc(me.name)+'">'
-    + '<input class="input" placeholder="Netfang (valfrjálst — birtist ekki, notað fyrir mynd)" id="'+emailId+'" value="'+esc(me.email)+'"></div>';
-}
-
 /* Bot guard: three cheap layers, none needing a third-party service.
    (1) A checkbox — the thing that actually gets clicked, matching what
        was asked for, though on its own it stops nothing scripted.
@@ -1090,85 +1127,132 @@ function identityFieldsHtml(nameId, emailId){
        typing.
    All three are re-checked server-side, since anything client-side-only
    is trivially bypassed by posting to the API directly. */
-function botGuardHtml(suffix){
-  return '<input type="text" class="hp" id="hp-'+suffix+'" tabindex="-1" autocomplete="off">'
-    + '<input type="hidden" id="ra-'+suffix+'" value="'+Date.now()+'">'
-    + '<label class="botCheck"><input type="checkbox" class="botCheckbox" data-guards="'+suffix+'"> Ég er ekki vélmenni</label>';
+function botGuardHtml(){
+  return '<input type="text" class="hp" id="hp-x" tabindex="-1" autocomplete="off">'
+    + '<input type="hidden" id="ra-x" value="'+Date.now()+'">'
+    + '<label class="botCheck"><input type="checkbox" class="botCheckbox" id="c-bot"> Ég er ekki vélmenni</label>';
+}
+
+// Finds the feed line a comment is tagged to, so the chat can show WHICH
+// moment someone was reacting to even though the comment no longer lives
+// inside the feed itself.
+function eventLabelFor(eventId){
+  if (eventId == null || !lastData || !lastData.feed) return "";
+  for (var i=0;i<lastData.feed.length;i++){
+    if (String(lastData.feed[i].seq) === String(eventId)){
+      var f = lastData.feed[i];
+      return (f.clock ? f.clock + " · " : "") + f.is;
+    }
+  }
+  return "";
+}
+
+// The single on-demand composer. Opens where it's needed, closes after
+// posting — so nothing sits on screen taking up space by default.
+function composerHtml(){
+  if (!composer) return "";
+  var me = rememberedIdentity();
+  var tag = "";
+  if (composer.parentId){
+    var parent = comments.find(function(c){ return c.id === composer.parentId; });
+    if (parent) tag = '<div class="composerTag">Svar við: ' + esc(parent.name) + '</div>';
+  } else if (composer.eventId != null){
+    var lbl = eventLabelFor(composer.eventId);
+    if (lbl) tag = '<div class="composerTag">Um: ' + esc(lbl) + '</div>';
+  }
+  return '<div class="composer" id="composerBox">'
+    + tag
+    + '<div class="composerIdentity">'
+      + '<input class="input" placeholder="Nafn" id="c-name" value="'+esc(me.name)+'">'
+      + '<input class="input" placeholder="Netfang (valfrjálst — birtist ekki, notað fyrir mynd)" id="c-email" value="'+esc(me.email)+'">'
+    + '</div>'
+    + '<textarea class="input textarea" placeholder="Skrifaðu athugasemd…" id="c-text" rows="3"></textarea>'
+    + botGuardHtml()
+    + '<div class="composerActions">'
+      + '<button class="btnGhostSmall" data-cancel-composer="1">Hætta við</button>'
+      + '<button id="send-x" data-send="1" disabled>Senda</button>'
+    + '</div></div>';
 }
 
 function commentHtml(c, depth){
+  var lbl = depth === 0 ? eventLabelFor(c.eventId) : "";
   return '<div class="comment'+(depth?' reply':'')+'">'
+    + (lbl ? '<div class="commentEventTag">'+esc(lbl)+'</div>' : '')
     + '<div class="cMeta">'+avatarHtml(c)+'<b>'+esc(c.name)+'</b><span>'+clock24(new Date(c.at))+'</span></div>'
     + '<p>'+esc(c.text)+'</p>'
-    + (depth===0 ? '<button class="replyBtn" data-reply="'+c.id+'">svara</button>' : '')
+    + '<button class="replyBtn" data-reply="'+c.id+'">svara</button>'
     + (adminKey ? ' <button class="replyBtn adminDelete" data-delete-comment="'+c.id+'">eyða</button>' : '')
-    + (depth===0 ? '<div class="replyBox" id="replyBox-'+c.id+'">'
-        + identityFieldsHtml("rn-"+c.id, "re-"+c.id)
-        + '<textarea class="input textarea textarea--reply" placeholder="Svar…" id="rt-'+c.id+'" rows="2"></textarea>'
-        + botGuardHtml("r"+c.id)
-        + '<button id="send-r'+c.id+'" data-send-reply="'+c.id+'" disabled>Senda</button></div>' : '')
+    + (composer && composer.parentId === c.id ? composerHtml() : '')
     + repliesTo(c.id).map(function(r){ return commentHtml(r, depth+1); }).join("")
     + '</div>';
 }
 
-function threadHtml(seq){
-  var top = topLevel(commentsForEvent(seq));
-  return '<div class="thread">'
-    + top.map(function(c){ return commentHtml(c, 0); }).join("")
-    + '<div class="composer">'
-      + identityFieldsHtml("cn-"+seq, "ce-"+seq)
-      + '<textarea class="input textarea" placeholder="Skrifaðu athugasemd…" id="ct-'+seq+'" rows="3"></textarea>'
-      + botGuardHtml("c"+seq)
-      + '<button id="send-c'+seq+'" data-send-event="'+seq+'" disabled>Senda</button></div></div>';
-}
-
 function renderFeedRow(f){
   var cls = "row" + (f.big?" big":"") + (f.kind==="info"?" info":"") + (f.known?"":" unknown");
-  var seq = f.seq, count = commentsForEvent(seq).length, open = openThreads.has(String(seq));
+  var seq = f.seq, count = commentsForEvent(seq).length;
   return '<div class="'+cls+'">'
     + '<div class="min">'+(f.clock||"")+'</div>'
     + '<div><div class="txt">'+esc(f.is)+'</div>'
     + (f.known ? "" : '<div class="kind">óþýtt: '+esc(f.kind)+'</div>')
     + '<div class="en">'+esc(f.en)+'</div>'
-    + '<button class="commentToggle" data-toggle="'+seq+'">💬 '+(count||"Skrifa")+'</button>'
-    + (open ? threadHtml(seq) : '')
+    + '<button class="commentToggle" data-comment-on="'+seq+'">💬 '+(count||"Skrifa")+'</button>'
     + '</div></div>';
 }
 
-function renderGeneral(){
-  var el = document.getElementById("generalComments");
+function renderFeed(){
+  var el = document.getElementById("feed");
+  var btn = document.getElementById("showAll");
+  if (!el || !lastData || !lastData.ok || !lastData.feed) return;
+  var all = lastData.feed;
+  var shown = showAllEvents ? all : all.slice(0, FEED_PREVIEW_COUNT);
+  el.innerHTML = shown.map(renderFeedRow).join("");
+  if (btn){
+    if (all.length > FEED_PREVIEW_COUNT){
+      btn.style.display = "block";
+      btn.textContent = showAllEvents
+        ? "Sýna færri atburði"
+        : "Sjá alla atburði (" + all.length + ")";
+    } else {
+      btn.style.display = "none";
+    }
+  }
+}
+
+// One unified chat: general comments AND event-tagged ones together,
+// newest first, each tagged with the moment it was about. The composer
+// only exists when opened, and sits directly above the newest comment.
+function renderChat(){
+  var el = document.getElementById("chat");
   if (!el) return;
-  var top = topLevel(generalComments());
-  // Named explicitly after the match on screen, rather than a generic
-  // floating "Spjall" — the whole point was that this should read as
-  // clearly connected to what's actually showing, not a separate feature.
+  if (!chatOpen){ el.innerHTML = ""; el.style.display = "none"; return; }
+  el.style.display = "block";
+
   var label = "Spjall";
   if (lastData && lastData.header) {
     label = "Spjall um " + lastData.header.home.short + " – " + lastData.header.away.short;
   }
+  var top = topLevel(comments).slice().sort(function(a,b){
+    return new Date(b.at) - new Date(a.at); // newest first
+  });
+
   el.innerHTML = '<h3 class="colHead">'+esc(label)+'</h3>'
     + (adminKey ? '<button class="adminWipe" data-delete-all="1">eyða öllu spjalli fyrir þennan leik</button>' : '')
-    + top.map(function(c){ return commentHtml(c, 0); }).join("")
-    + '<div class="composer">'
-      + identityFieldsHtml("gn", "ge")
-      + '<textarea class="input textarea" placeholder="Skrifaðu athugasemd…" id="gt" rows="3"></textarea>'
-      + botGuardHtml("g")
-      + '<button id="send-g" data-send-general="1" disabled>Senda</button></div>';
+    + (composer && !composer.parentId ? composerHtml()
+        : '<button class="newCommentBtn" data-open-composer="general">Skrifa athugasemd</button>')
+    + (top.length ? top.map(function(c){ return commentHtml(c, 0); }).join("")
+        : '<p class="chatEmpty">Engar athugasemdir ennþá.</p>');
 }
-
 
 function reRenderAll(){
   var snap = snapshotComposers();
-  if (lastData && lastData.ok && lastData.feed){
-    document.getElementById("feed").innerHTML = lastData.feed.map(renderFeedRow).join("");
-  }
-  renderGeneral();
+  renderFeed();
+  renderChat();
   restoreComposers(snap);
 }
 
 async function loadComments(){
   if (!lastData || !lastData.ok) return;
-  const el = document.getElementById("generalComments");
+  const el = document.getElementById("chat");
   try{
     const r = await fetch("/api/ynwa/comments?event="+encodeURIComponent(lastData.eventId), { cache:"no-store" });
     const j = await r.json();
@@ -1209,57 +1293,68 @@ async function deleteAllComments(){
   await loadComments();
 }
 
-async function postComment(eventId, parentId, name, email, textElId, website, renderedAt){
-  var textEl = document.getElementById(textElId);
+async function postComment(){
+  if (!composer || !lastData || !lastData.ok) return;
+  var textEl = document.getElementById("c-text");
   var text = textEl ? textEl.value : "";
-  if (!text || !text.trim() || !lastData || !lastData.ok) return;
+  if (!text || !text.trim()) return;
+  var name = (document.getElementById("c-name")||{}).value || "";
+  var email = (document.getElementById("c-email")||{}).value || "";
+  var website = (document.getElementById("hp-x")||{}).value || "";
+  var renderedAt = (document.getElementById("ra-x")||{}).value || "";
   rememberIdentity(name, email);
+  var ok = false;
   try{
     var res = await fetch("/api/ynwa/comments", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ matchId: lastData.eventId, eventId: eventId, parentId: parentId,
-        name: name, email: email, text: text, website: website, renderedAt: renderedAt }),
+      body: JSON.stringify({ matchId: lastData.eventId, eventId: composer.eventId,
+        parentId: composer.parentId, name: name, email: email, text: text,
+        website: website, renderedAt: renderedAt }),
     });
     var j = await res.json();
-    // Only clear on a CONFIRMED success — if this was rejected (rate
-    // limited, bot-check, network hiccup), leave what they wrote so
-    // nothing is lost. And clear it right here, before loadComments()
-    // rebuilds anything — otherwise the snapshot/restore that protects
-    // in-progress typing would just as faithfully bring the just-sent
-    // text straight back.
-    if (j && j.ok && textEl) textEl.value = "";
+    ok = !!(j && j.ok);
   } catch(e){ /* best effort */ }
+  // Close the composer only on a confirmed success — if it was rejected
+  // (rate limit, bot check, dropped connection) keep it open with what
+  // they wrote still in it, so nothing is lost.
+  if (ok) composer = null;
   await loadComments();
 }
 
 document.addEventListener("change", function(e){
   if (e.target.classList && e.target.classList.contains("botCheckbox")){
-    var btn = document.getElementById("send-"+e.target.dataset.guards);
+    var btn = document.getElementById("send-x");
     if (btn) btn.disabled = !e.target.checked;
   }
 });
 
+// Opens the single composer aimed at a target, then scrolls to it — the
+// point of moving comments out of the feed was that clicking 💬 on a
+// moment should take you to the conversation, not grow the feed.
+function openComposer(eventId, parentId){
+  composer = { eventId: eventId != null ? String(eventId) : null,
+               parentId: parentId != null ? String(parentId) : null };
+  if (!chatOpen){ chatOpen = true; try { localStorage.setItem("ynwa:chat","on"); } catch(e){} syncChatBtn(); }
+  reRenderAll();
+  var box = document.getElementById("composerBox");
+  if (box && box.scrollIntoView) box.scrollIntoView({ behavior:"smooth", block:"center" });
+  var ta = document.getElementById("c-text");
+  if (ta) ta.focus();
+}
+
 document.addEventListener("click", function(e){
   var t = e.target;
-  if (t.dataset.toggle){
-    var seq = t.dataset.toggle;
-    if (openThreads.has(seq)) openThreads.delete(seq); else openThreads.add(seq);
-    reRenderAll();
+  if (t.dataset.commentOn){
+    openComposer(t.dataset.commentOn, null);
+  } else if (t.dataset.openComposer){
+    openComposer(null, null);
   } else if (t.dataset.reply){
-    var box = document.getElementById("replyBox-"+t.dataset.reply);
-    if (box) box.classList.toggle("replyBox--open");
-  } else if (t.dataset.sendEvent){
-    var seq2 = t.dataset.sendEvent;
-    postComment(seq2, null, document.getElementById("cn-"+seq2).value, document.getElementById("ce-"+seq2).value,
-      "ct-"+seq2, document.getElementById("hp-c"+seq2).value, document.getElementById("ra-c"+seq2).value);
-  } else if (t.dataset.sendGeneral){
-    postComment(null, null, document.getElementById("gn").value, document.getElementById("ge").value,
-      "gt", document.getElementById("hp-g").value, document.getElementById("ra-g").value);
-  } else if (t.dataset.sendReply){
-    var id = t.dataset.sendReply;
-    var parent = comments.find(function(c){ return c.id === id; });
-    postComment(parent ? parent.eventId : null, id, document.getElementById("rn-"+id).value, document.getElementById("re-"+id).value,
-      "rt-"+id, document.getElementById("hp-r"+id).value, document.getElementById("ra-r"+id).value);
+    openComposer(null, t.dataset.reply);
+  } else if (t.dataset.cancelComposer){
+    composer = null;
+    reRenderAll();
+  } else if (t.dataset.send){
+    postComment();
   } else if (t.dataset.deleteComment){
     deleteComment(t.dataset.deleteComment);
   } else if (t.dataset.deleteAll){
@@ -1284,6 +1379,24 @@ document.getElementById("toggleEn").addEventListener("click", function(){
   this.textContent = document.body.classList.contains("show-en")
     ? "Fela enska textann" : "Sýna enska textann";
 });
+function syncChatBtn(){
+  var b = document.getElementById("toggleChat");
+  if (!b) return;
+  b.classList.toggle("on", chatOpen);
+  b.textContent = chatOpen ? "Fela spjall" : "Spjall";
+}
+document.getElementById("toggleChat").addEventListener("click", function(){
+  chatOpen = !chatOpen;
+  try { localStorage.setItem("ynwa:chat", chatOpen ? "on" : "off"); } catch(e){}
+  syncChatBtn();
+  renderChat();
+});
+document.getElementById("showAll").addEventListener("click", function(){
+  showAllEvents = !showAllEvents;
+  renderFeed();
+});
+syncChatBtn();
+
 document.getElementById("refresh").addEventListener("click", load);
 load();
 </script>
