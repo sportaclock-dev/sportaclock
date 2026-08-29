@@ -838,6 +838,12 @@ body.show-en .en{display:block}
 footer{margin-top:34px;padding-top:14px;border-top:1px solid var(--line);
   color:var(--faint);font-size:.68rem;line-height:1.7}
 @media (max-width:520px){.row{grid-template-columns:44px 1fr;gap:10px}}
+.demoBanner{margin:0 0 16px;padding:10px 14px;border:1px dashed var(--gold, #F6EB61);
+  border-radius:9px;background:rgba(246,235,97,.06);font-size:.74rem;letter-spacing:.04em;
+  color:#F6EB61;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.demoBanner button{padding:5px 11px;border-radius:6px;border:1px solid #F6EB61;
+  background:none;color:#F6EB61;font-size:.72rem;font-family:var(--sans);cursor:pointer}
+.demoBanner button:hover{background:rgba(246,235,97,.12)}
 </style>
 </head>
 <body>
@@ -1453,6 +1459,101 @@ async function load(){
     clearTimeout(timer); timer = setTimeout(load, 15000);
   }
 }
+
+/* ============================================================
+   ?demo=1 — a scripted, self-ticking fake match for testing the real
+   page without waiting for an actual Liverpool fixture. Feeds render()
+   and loadComments() locally-built payloads shaped exactly like the
+   real API response, so every rendering function runs completely
+   unmodified — this exercises the genuine deployed code, not a
+   reimplementation. Comments still go through the REAL, Upstash-backed
+   API, scoped to a fixed fake match id so nothing here can ever mix
+   with a real match's data. Squad numbers stand in for names, same
+   reasoning as every other scripted demo in this project: attaching
+   invented goals and cards to real, named players felt wrong even in
+   an obvious test.
+   ============================================================ */
+var isDemo = new URLSearchParams(location.search).get("demo") === "1";
+var DEMO_MATCH_ID = "demo-match";
+var DEMO_SCRIPT = [
+  { min: "", kind: "kickoff", text: "Leikurinn er hafinn." },
+  { min: "3'", kind: "shot-off-target", text: "Skot framhjá — nr. 9 (Heimalið)." },
+  { min: "8'", kind: "corner", text: "Horn — Gestalið." },
+  { min: "14'", kind: "goal", side: "home", text: "MARK! Nr. 7 (Heimalið) — 1–0. Stoðsending: nr. 11." },
+  { min: "22'", kind: "yellow", text: "Gult spjald — nr. 4 (Gestalið)." },
+  { min: "31'", kind: "sub", text: "Skipting hjá Heimalið: Nr. 15 kemur inn á fyrir Nr. 9." },
+  { min: "38'", kind: "shot-on-target", text: "Skot á markið — nr. 10 (Gestalið). Markvörður ver." },
+  { min: "45'+1", kind: "halftime", text: "Hálfleikur." },
+  { min: "46'", kind: "start2", text: "Síðari hálfleikur hafinn." },
+  { min: "57'", kind: "goal", side: "away", text: "MARK! Nr. 10 (Gestalið) — 1–1." },
+  { min: "68'", kind: "foul", text: "Brot — nr. 6 (Heimalið)." },
+  { min: "74'", kind: "goal", side: "home", text: "MARK! Nr. 7 (Heimalið) — 2–1. Stoðsending: nr. 8." },
+  { min: "83'", kind: "sub", text: "Skipting hjá Gestalið: Nr. 18 kemur inn á fyrir Nr. 10." },
+  { min: "90'+3", kind: "fulltime", text: "Leik lokið." },
+];
+var demoIdx = 0;
+
+function demoScoreUpTo(idx){
+  var h=0,a=0;
+  for (var i=0;i<idx;i++){ if(DEMO_SCRIPT[i].kind==="goal"){ if(DEMO_SCRIPT[i].side==="home") h++; else a++; } }
+  return { h:h, a:a };
+}
+function demoFeedUpTo(idx){
+  var out=[];
+  for (var i=0;i<idx;i++){
+    var e=DEMO_SCRIPT[i];
+    out.push({ seq:i+1, clock:e.min, is:e.text, en:e.text, kind:e.kind, known:true, big:e.kind==="goal" });
+  }
+  return out.slice().reverse();
+}
+function demoPayload(idx){
+  var sc = demoScoreUpTo(idx);
+  var done = idx >= DEMO_SCRIPT.length;
+  var last = DEMO_SCRIPT[idx-1];
+  return {
+    ok:true, eventId:DEMO_MATCH_ID, slug:"demo", matchName:"Sýnidæmi",
+    kickoffIso:null, kickoffText:"", kickoffDay:"",
+    header:{
+      home:{ name:"Heimalið", short:"Heimalið", logo:"", score:String(sc.h) },
+      away:{ name:"Gestalið", short:"Gestalið", logo:"", score:String(sc.a) },
+      state: done ? "post" : "in",
+      detail: done ? "" : (last ? last.min : ""),
+      kickoff:null, venue:"Æfingavöllur", league:"Sýnidæmi",
+    },
+    lagSec: done ? null : Math.floor(Math.random()*20)+5,
+    untranslated:0,
+    feed: demoFeedUpTo(idx),
+    fetchedAt: new Date().toISOString(),
+  };
+}
+function demoRestart(){
+  demoIdx = 0;
+  clearTimeout(timer);
+  load();
+}
+if (isDemo){
+  // Runs before the button below is wired up and before the initial
+  // load() call at the very end of the script — both reference load by
+  // name, and addEventListener captures whatever load IS at that line,
+  // not a live binding, so this has to happen first.
+  load = async function(){
+    if (demoIdx < DEMO_SCRIPT.length) demoIdx++;
+    render(demoPayload(demoIdx));
+    await loadComments();
+    clearTimeout(timer);
+    timer = setTimeout(load, demoIdx < DEMO_SCRIPT.length ? 5000 : 20000);
+  };
+  var banner = document.createElement("div");
+  banner.className = "demoBanner";
+  banner.innerHTML = "SÝNIDÆMI — gervi gögn til að prófa síðuna, ekki alvöru leikur. "
+    + '<button id="demoRestart">Endurræsa</button>';
+  document.querySelector(".wrap").insertBefore(banner, document.querySelector(".head"));
+  setTimeout(function(){
+    var b = document.getElementById("demoRestart");
+    if (b) b.addEventListener("click", demoRestart);
+  }, 0);
+}
+
 
 document.getElementById("toggleEn").addEventListener("click", function(){
   document.body.classList.toggle("show-en");
