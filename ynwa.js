@@ -775,11 +775,11 @@ body.show-en .en{display:block}
 .comment{padding:8px 10px;background:var(--panel);border:1px solid var(--line);border-radius:8px;
   margin-bottom:6px}
 .comment.reply{margin-left:20px;background:#1A1A1E}
-.cMeta{display:flex;align-items:center;gap:7px;font-size:.66rem;color:var(--dim);margin-bottom:3px}
+.cMeta{display:flex;align-items:center;gap:8px;font-size:.85rem;color:var(--dim);margin-bottom:5px}
 .cMeta b{color:var(--text);flex:1}
 .avatar{width:20px;height:20px;border-radius:50%;object-fit:cover;flex:none;background:var(--line)}
-.comment p{font-size:.82rem;line-height:1.42;margin:0}
-.replyBtn{margin-top:4px;background:none;border:none;color:var(--red);font-size:.68rem;
+.comment p{font-size:1.05rem;line-height:1.55;margin:0}
+.replyBtn{margin-top:6px;background:none;border:none;color:var(--red);font-size:.85rem;
   cursor:pointer;padding:0;font-family:var(--sans)}
 .replyBox{display:none;flex-direction:column;gap:6px;margin-top:8px}
 .replyBox--open{display:flex}
@@ -791,7 +791,8 @@ body.show-en .en{display:block}
 .input{padding:7px 9px;border-radius:7px;background:var(--bg);border:1px solid var(--line);
   color:var(--text);font-size:16px;font-family:var(--sans)}
 .input::placeholder{color:var(--faint)}
-.textarea{width:100%;resize:vertical;min-height:64px;line-height:1.4;font-size:16px}
+.textarea{width:100%;resize:vertical;min-height:90px;max-height:50vh;line-height:1.45;font-size:16px;
+  overflow-y:auto}
 .textarea--reply{min-height:44px}
 .hp{position:absolute;left:-9999px;width:1px;height:1px;opacity:0}
 .botCheck{display:flex;align-items:center;gap:6px;font-size:.76rem;color:var(--dim);cursor:pointer}
@@ -828,8 +829,12 @@ body.show-en .en{display:block}
 .btnGhostSmall:hover{color:var(--text)}
 /* A comment keeps a visible link to the moment it was about, even
    though it no longer lives inside the feed. */
-.commentEventTag{font-size:.68rem;color:var(--dim);border-left:2px solid var(--red);
-  padding-left:6px;margin-bottom:5px;line-height:1.3}
+/* The "which moment was this about" tag — this is the link back to the
+   live feed, so it needs to actually be readable rather than a faint
+   footnote. Given its own panel and near-body-size text. */
+.commentEventTag{font-size:.92rem;color:var(--text);border-left:3px solid var(--red);
+  background:rgba(200,16,46,.07);border-radius:0 6px 6px 0;
+  padding:7px 10px;margin-bottom:8px;line-height:1.4;font-weight:500}
 footer{margin-top:34px;padding-top:14px;border-top:1px solid var(--line);
   color:var(--faint);font-size:.68rem;line-height:1.7}
 @media (max-width:520px){.row{grid-template-columns:44px 1fr;gap:10px}}
@@ -992,7 +997,7 @@ function render(d){
   } else {
     middle = '<div class="nums">'+(h.home.score||"0")+' – '+(h.away.score||"0")+'</div>';
   }
-  scoreEl.innerHTML =
+  var scoreHtml =
     '<div class="score">'
     + '<div class="side">' + (h.home.logo ? '<img src="'+h.home.logo+'" alt="">' : "")
       + '<span class="nm">'+h.home.short+'</span></div>'
@@ -1005,16 +1010,25 @@ function render(d){
     + (h.state === "pre" && d.kickoffIso
         ? '<p class="until" id="until"></p>' : "");
 
-  startCountdown(h.state === "pre" ? d.kickoffIso : null);
+  // Same reasoning as the feed: identical innerHTML still recreates every
+  // node, so only write when something genuinely changed.
+  if (scoreEl.innerHTML !== scoreHtml){
+    scoreEl.innerHTML = scoreHtml;
+    startCountdown(h.state === "pre" ? d.kickoffIso : null);
+  }
 
   if (!d.feed.length){
-    feedEl.innerHTML = d.limited
+    var emptyHtml = d.limited
       ? '<div class="empty">Næ ekki í lýsinguna frá ESPN í augnablikinu.'
         + '<br><span style="color:#4A4A53">Reyni sjálfkrafa aftur — leikurinn sjálfur er réttur.</span></div>'
       : '<div class="empty">Lýsingin byrjar þegar flautað er til leiks.'
         + '<br><span style="color:#4A4A53">Atburðir birtast hér sjálfkrafa.</span></div>';
+    if (feedEl.innerHTML !== emptyHtml) feedEl.innerHTML = emptyHtml;
   } else {
-    feedEl.innerHTML = d.feed.map(renderFeedRow).join("");
+    // Goes through renderFeed() so the 5-event preview and its
+    // "Sjá alla atburði" toggle are respected — this path used to write
+    // the entire unpaginated feed directly, undoing both on every poll.
+    renderFeed();
   }
 
   const t = clock24(new Date(d.fetchedAt));
@@ -1205,7 +1219,11 @@ function renderFeed(){
   if (!el || !lastData || !lastData.ok || !lastData.feed) return;
   var all = lastData.feed;
   var shown = showAllEvents ? all : all.slice(0, FEED_PREVIEW_COUNT);
-  el.innerHTML = shown.map(renderFeedRow).join("");
+  var html = shown.map(renderFeedRow).join("");
+  // Only touch the DOM if the markup actually differs. Assigning identical
+  // innerHTML still destroys and recreates every node — which is what made
+  // routine polls look like the whole page was reloading.
+  if (el.innerHTML !== html) el.innerHTML = html;
   if (btn){
     if (all.length > FEED_PREVIEW_COUNT){
       btn.style.display = "block";
@@ -1243,11 +1261,52 @@ function renderChat(){
         : '<p class="chatEmpty">Engar athugasemdir ennþá.</p>');
 }
 
-function reRenderAll(){
-  var snap = snapshotComposers();
-  renderFeed();
+// If someone has actually started writing, don't rebuild the chat under
+// them — mid-typing is exactly when a refresh is most disruptive, and
+// seeing the newest comment matters far less than not losing your place.
+// This deliberately checks for real typed content, not just an open
+// composer, so an empty box left open doesn't freeze the chat forever.
+// The feed and score keep updating either way: someone writing still
+// wants to see the match itself move.
+function isTyping(){
+  var ta = document.getElementById("c-text");
+  return !!(ta && ta.value && ta.value.trim().length > 0);
+}
+
+// A cheap fingerprint of what's actually on screen in the chat. If this
+// is unchanged, rebuilding the chat would produce identical HTML — so
+// we skip it entirely rather than tearing down and recreating nodes the
+// person may be reading or typing into.
+function chatSignature(){
+  return comments.map(function(c){
+    return c.id + ":" + (c.text || "").length;
+  }).join("|") + "#" + (composer ? (composer.eventId||"") + "/" + (composer.parentId||"") : "none")
+    + "#" + (chatOpen ? "1" : "0") + "#" + (adminKey ? "a" : "");
+}
+var lastChatSig = null;
+
+function renderChatIfChanged(){
+  // Never rebuild under someone mid-sentence — that was the visible
+  // "whole page refreshed" jolt, and it's most disruptive exactly when
+  // they're writing.
+  if (isTyping()) return;
+  var sig = chatSignature();
+  if (sig === lastChatSig) return; // nothing changed — leave the DOM alone
+  lastChatSig = sig;
   renderChat();
-  restoreComposers(snap);
+}
+
+function reRenderAll(){
+  renderFeed();
+  renderChatIfChanged();
+}
+
+// Forces a chat rebuild regardless of the signature — used after the
+// person themselves acts (posting, opening the composer, deleting), where
+// the DOM must change immediately rather than waiting on a diff.
+function forceRenderChat(){
+  lastChatSig = null;
+  renderChatIfChanged();
 }
 
 async function loadComments(){
@@ -1256,9 +1315,14 @@ async function loadComments(){
   try{
     const r = await fetch("/api/ynwa/comments?event="+encodeURIComponent(lastData.eventId), { cache:"no-store" });
     const j = await r.json();
-    if (j.ok){ comments = j.comments; reRenderAll(); }
-    else if (el) el.innerHTML = commentsErrorHtml(j.reason || "óþekkt villa");
-  } catch(e){ if (el) el.innerHTML = commentsErrorHtml(e.message); }
+    if (j.ok){
+      comments = j.comments;
+      reRenderAll();
+    }
+    // Don't replace the chat with an error message while someone is
+    // mid-sentence either — that would wipe what they're writing.
+    else if (el && !isTyping()) el.innerHTML = commentsErrorHtml(j.reason || "óþekkt villa");
+  } catch(e){ if (el && !isTyping()) el.innerHTML = commentsErrorHtml(e.message); }
 }
 
 // Comments failing used to fail SILENTLY — nothing rendered, no way to tell
@@ -1317,9 +1381,26 @@ async function postComment(){
   // Close the composer only on a confirmed success — if it was rejected
   // (rate limit, bot check, dropped connection) keep it open with what
   // they wrote still in it, so nothing is lost.
-  if (ok) composer = null;
+  // Clearing the textarea here is load-bearing, not cosmetic: isTyping()
+  // reads that field, so leaving the sent text in it would make the very
+  // refresh that displays your own comment look like "someone is mid-
+  // sentence, don't rebuild" and silently skip it.
+  if (ok){
+    composer = null;
+    if (textEl) textEl.value = "";
+  }
   await loadComments();
 }
+
+// Grow the box to fit what's been written, so nothing scrolls out of
+// sight mid-sentence. Capped by max-height in CSS so it can't take over
+// the screen on a very long comment.
+document.addEventListener("input", function(e){
+  if (e.target && e.target.id === "c-text"){
+    e.target.style.height = "auto";
+    e.target.style.height = Math.min(e.target.scrollHeight, window.innerHeight * 0.5) + "px";
+  }
+});
 
 document.addEventListener("change", function(e){
   if (e.target.classList && e.target.classList.contains("botCheckbox")){
@@ -1335,7 +1416,7 @@ function openComposer(eventId, parentId){
   composer = { eventId: eventId != null ? String(eventId) : null,
                parentId: parentId != null ? String(parentId) : null };
   if (!chatOpen){ chatOpen = true; try { localStorage.setItem("ynwa:chat","on"); } catch(e){} syncChatBtn(); }
-  reRenderAll();
+  forceRenderChat();
   var box = document.getElementById("composerBox");
   if (box && box.scrollIntoView) box.scrollIntoView({ behavior:"smooth", block:"center" });
   var ta = document.getElementById("c-text");
@@ -1352,7 +1433,7 @@ document.addEventListener("click", function(e){
     openComposer(null, t.dataset.reply);
   } else if (t.dataset.cancelComposer){
     composer = null;
-    reRenderAll();
+    forceRenderChat();
   } else if (t.dataset.send){
     postComment();
   } else if (t.dataset.deleteComment){
@@ -1389,7 +1470,7 @@ document.getElementById("toggleChat").addEventListener("click", function(){
   chatOpen = !chatOpen;
   try { localStorage.setItem("ynwa:chat", chatOpen ? "on" : "off"); } catch(e){}
   syncChatBtn();
-  renderChat();
+  forceRenderChat();
 });
 document.getElementById("showAll").addEventListener("click", function(){
   showAllEvents = !showAllEvents;

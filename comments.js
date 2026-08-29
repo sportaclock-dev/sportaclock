@@ -42,7 +42,7 @@ const UPSTASH_URL = cleanEnv(process.env.UPSTASH_REDIS_REST_URL);
 const UPSTASH_TOKEN = cleanEnv(process.env.UPSTASH_REDIS_REST_TOKEN);
 
 const MAX_NAME = 40;
-const MAX_TEXT = 280;
+const MAX_TEXT = 2000; // was 280 — long comments were being silently truncated mid-word
 const MIN_SUBMIT_MS = 1500; // a real person needs at least this long to read + type
 const ADMIN_KEY = cleanEnv(process.env.ADMIN_KEY);
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
