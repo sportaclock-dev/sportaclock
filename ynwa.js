@@ -919,6 +919,16 @@ body.show-en .en{display:block}
   background:var(--panel);border:1px solid var(--line);border-top:none;
   border-radius:0 0 10px 10px;margin-bottom:10px}
 
+/* Expanded in place rather than navigating away — the whole point of
+   moving this list onto the main page was not having to leave it. */
+.archiveCard{cursor:pointer}
+.archiveCard.open{border-color:var(--red);border-bottom-color:var(--line)}
+.archiveHint{float:right;color:var(--faint)}
+.archiveExpanded{margin:-10px 0 18px;padding:14px;border:1px solid var(--line);
+  border-top:none;border-radius:0 0 10px 10px;background:#0F0F12}
+.archiveExpanded .row{margin-bottom:6px}
+.archiveExpanded .comment{margin-bottom:6px}
+
 /* The composer only exists when opened, so it gets a clear frame to
    show it's a distinct, temporary thing rather than page furniture. */
 .newCommentBtn{width:100%;padding:10px;margin-bottom:10px;border-radius:8px;
@@ -1458,27 +1468,191 @@ function forceRenderChat(){
    Articles will also get comment threads for free: comments.js keys
    everything by an opaque content id and never assumes ESPN matches,
    so an article carrying its own id works through the same endpoints. */
-function archiveItemHtml(item){
-  if (item.type === "article"){
-    // Not reachable yet — no article source exists. Here so the shape of
-    // the feed is settled, and so adding articles doesn't mean revisiting
-    // how the list itself works.
-    return '<a class="archiveCard" href="/ynwa?grein='+encodeURIComponent(item.id)+'">'
-      + '<div class="archiveCrestSide">'+esc(item.title||"")+'</div></a>'
-      + '<div class="archiveMeta">'+esc(item.kicker||"Grein")+' · '+dateIs(item.dateIso)+'</div>';
-  }
-  return '<a class="archiveCard" href="/ynwa?match='+encodeURIComponent(item.id)+'">'
-    + '<div class="archiveCrestSide">'+esc(item.home)+'</div>'
-    + '<div class="archiveScore">'+esc(item.homeScore)+' – '+esc(item.awayScore)+'</div>'
-    + '<div class="archiveCrestSide away">'+esc(item.away)+'</div></a>'
-    + '<div class="archiveMeta">'+esc(item.league||"")+' · '+dateIs(item.dateIso)+'</div>';
-}
+/* The bottom-of-page content feed.
+
+   Deliberately a list of generic dated ITEMS, not a list of matches.
+   Today every item is type:"match", so it renders as a match list — but
+   articles (match reports, transfer posts) are meant to live in this
+   same feed, interleaved by date, so a Forest report written after the
+   Forest match appears above it.
+
+   Items EXPAND IN PLACE rather than navigating away: the whole point of
+   moving this list onto the main page was not having to leave and come
+   back. Each expanded match fetches its own frozen feed and its own
+   comments, and keeps them in archiveData so re-opening is instant.
+
+   The expanded comment thread deliberately does NOT reuse the live
+   page's chat state (the global comments/composer vars). Those are
+   bound to the match at the top of the page; sharing them would mean an
+   old match's thread and the live one fighting over the same variables.
+   Self-contained here, keyed by match id, is the safer shape. */
+var archiveItems = [];
+var archiveData = {};        // matchId -> { match, comments }
+var archiveOpen = null;      // which match id is expanded, if any
+var archiveShowAllEvents = false;
+var archiveComposerOpen = false;
+var ARCHIVE_PREVIEW_EVENTS = 5;
 
 function dateIs(iso){
   if (!iso) return "";
   try { return new Date(iso).toLocaleDateString("is-IS", { day:"numeric", month:"long", year:"numeric" }); }
   catch(e){ return ""; }
 }
+
+function archiveCommentHtml(c, all, depth){
+  var kids = all.filter(function(x){ return x.parentId === c.id; });
+  return '<div class="comment'+(depth?' reply':'')+'">'
+    + '<div class="cMeta">'+avatarHtml(c)+'<b>'+esc(c.name)+'</b><span>'+clock24(new Date(c.at))+'</span></div>'
+    + '<p>'+esc(c.text)+'</p>'
+    + kids.map(function(k){ return archiveCommentHtml(k, all, depth+1); }).join("")
+    + '</div>';
+}
+
+function archiveExpandedHtml(id){
+  var d = archiveData[id];
+  if (!d) return '<div class="archiveExpanded"><p class="archiveEmpty">Sæki leikinn…</p></div>';
+  if (!d.match) return '<div class="archiveExpanded"><p class="archiveEmpty">Næ ekki í þennan leik.</p></div>';
+
+  var feed = d.match.feed || [];
+  var shown = archiveShowAllEvents ? feed : feed.slice(0, ARCHIVE_PREVIEW_EVENTS);
+  var top = (d.comments || []).filter(function(c){ return c.parentId == null; })
+    .slice().sort(function(a,b){ return new Date(b.at) - new Date(a.at); });
+
+  var me = rememberedIdentity();
+  var composer = archiveComposerOpen
+    ? '<div class="composer">'
+      + '<div class="composerIdentity">'
+        + '<input class="input" placeholder="Nafn" id="ac-name" value="'+esc(me.name)+'">'
+        + '<input class="input" placeholder="Netfang (valfrjálst — birtist ekki, notað fyrir mynd)" id="ac-email" value="'+esc(me.email)+'">'
+      + '</div>'
+      + '<textarea class="input textarea" placeholder="Skrifaðu athugasemd…" id="ac-text" rows="3"></textarea>'
+      + '<input type="text" class="hp" id="ac-hp" tabindex="-1" autocomplete="off">'
+      + '<input type="hidden" id="ac-ra" value="'+Date.now()+'">'
+      + '<label class="botCheck"><input type="checkbox" id="ac-bot"> Ég er ekki vélmenni</label>'
+      + '<div class="composerActions">'
+        + '<button class="btnGhostSmall" data-archive-cancel="1">Hætta við</button>'
+        + '<button id="ac-send" data-archive-send="'+id+'" disabled>Senda</button>'
+      + '</div></div>'
+    : '<button class="newCommentBtn" data-archive-compose="'+id+'">Skrifa athugasemd</button>';
+
+  return '<div class="archiveExpanded">'
+    + shown.map(function(f){
+        var cls = "row" + (f.big?" big":"")
+          + (f.isGoal && f.isLiverpoolGoal ? " goalLFC" : "")
+          + (f.isGoal && !f.isLiverpoolGoal ? " goalOpp" : "")
+          + (f.kind==="info"?" info":"");
+        return '<div class="'+cls+'"><div class="min">'+esc(f.clock||"")+'</div>'
+          + '<div><div class="txt">'+esc(f.is)+'</div></div></div>';
+      }).join("")
+    + (feed.length > ARCHIVE_PREVIEW_EVENTS
+        ? '<button class="showAllBtn" style="display:block" data-archive-showall="'+id+'">'
+          + (archiveShowAllEvents ? "Sýna færri atburði" : "Sjá alla atburði ("+feed.length+")") + '</button>'
+        : "")
+    + '<h4 class="archiveHeading" style="margin-top:16px">Spjall</h4>'
+    + composer
+    + (top.length ? top.map(function(c){ return archiveCommentHtml(c, d.comments, 0); }).join("")
+        : '<p class="archiveEmpty">Engar athugasemdir.</p>')
+    + '</div>';
+}
+
+function archiveItemHtml(item){
+  var isOpen = String(archiveOpen) === String(item.id);
+  if (item.type === "article"){
+    // Not reachable yet — no article source exists. Here so the shape of
+    // the feed is settled, and adding articles doesn't mean revisiting
+    // how the list itself works.
+    return '<div class="archiveCard" data-archive-toggle="'+esc(item.id)+'">'
+      + '<div class="archiveCrestSide">'+esc(item.title||"")+'</div></div>'
+      + '<div class="archiveMeta">'+esc(item.kicker||"Grein")+' · '+dateIs(item.dateIso)+'</div>'
+      + (isOpen ? archiveExpandedHtml(item.id) : "");
+  }
+  return '<div class="archiveCard'+(isOpen?' open':'')+'" data-archive-toggle="'+esc(item.id)+'">'
+    + '<div class="archiveCrestSide">'+esc(item.home)+'</div>'
+    + '<div class="archiveScore">'+esc(item.homeScore)+' – '+esc(item.awayScore)+'</div>'
+    + '<div class="archiveCrestSide away">'+esc(item.away)+'</div></div>'
+    + '<div class="archiveMeta">'+esc(item.league||"")+' · '+dateIs(item.dateIso)
+      + ' <span class="archiveHint">'+(isOpen ? "− loka" : "+ sjá lýsingu og spjall")+'</span></div>'
+    + (isOpen ? archiveExpandedHtml(item.id) : "");
+}
+
+function renderArchiveList(){
+  var el = document.getElementById("archiveList");
+  if (!el) return;
+  if (!archiveItems.length){ el.innerHTML = ""; return; }
+  el.innerHTML = '<h3 class="archiveHeading">Eldri leikir</h3>'
+    + archiveItems.map(archiveItemHtml).join("");
+}
+
+async function openArchiveItem(id){
+  if (String(archiveOpen) === String(id)){ archiveOpen = null; renderArchiveList(); return; }
+  archiveOpen = String(id);
+  archiveShowAllEvents = false;
+  archiveComposerOpen = false;
+  renderArchiveList();                       // shows "Sæki leikinn…" immediately
+  if (!archiveData[id]){
+    try{
+      var mr = await fetch("/api/ynwa/archive/match?event="+encodeURIComponent(id)).then(function(r){ return r.json(); });
+      var cr = await fetch("/api/ynwa/comments?event="+encodeURIComponent(id)).then(function(r){ return r.json(); });
+      archiveData[id] = { match: (mr && mr.ok !== false) ? mr : null,
+                          comments: (cr && cr.ok) ? cr.comments : [] };
+    } catch(e){ archiveData[id] = { match:null, comments:[] }; }
+  }
+  if (String(archiveOpen) === String(id)) renderArchiveList();
+}
+
+async function postArchiveComment(id){
+  var textEl = document.getElementById("ac-text");
+  var text = textEl ? textEl.value : "";
+  if (!text || !text.trim()) return;
+  var name = (document.getElementById("ac-name")||{}).value || "";
+  var email = (document.getElementById("ac-email")||{}).value || "";
+  rememberIdentity(name, email);
+  var ok = false;
+  try{
+    var r = await fetch("/api/ynwa/comments", {
+      method:"POST", headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ matchId:String(id), eventId:null, parentId:null,
+        name:name, email:email, text:text,
+        website:(document.getElementById("ac-hp")||{}).value || "",
+        renderedAt:(document.getElementById("ac-ra")||{}).value || "" }),
+    });
+    var j = await r.json();
+    ok = !!(j && j.ok);
+  } catch(e){ /* best effort */ }
+  if (!ok) return;                            // keep what they wrote if it was refused
+  archiveComposerOpen = false;
+  try{
+    var cr = await fetch("/api/ynwa/comments?event="+encodeURIComponent(id), { cache:"no-store" })
+      .then(function(x){ return x.json(); });
+    if (cr && cr.ok && archiveData[id]) archiveData[id].comments = cr.comments;
+  } catch(e){ /* best effort */ }
+  renderArchiveList();
+}
+
+document.addEventListener("change", function(e){
+  if (e.target && e.target.id === "ac-bot"){
+    var b = document.getElementById("ac-send");
+    if (b) b.disabled = !e.target.checked;
+  }
+});
+
+document.addEventListener("click", function(e){
+  var t = e.target;
+  var card = t.closest ? t.closest("[data-archive-toggle]") : null;
+  if (card){ openArchiveItem(card.dataset.archiveToggle); return; }
+  if (t.dataset && t.dataset.archiveShowall){
+    archiveShowAllEvents = !archiveShowAllEvents; renderArchiveList(); return;
+  }
+  if (t.dataset && t.dataset.archiveCompose){
+    archiveComposerOpen = true; renderArchiveList(); return;
+  }
+  if (t.dataset && t.dataset.archiveCancel){
+    archiveComposerOpen = false; renderArchiveList(); return;
+  }
+  if (t.dataset && t.dataset.archiveSend){
+    postArchiveComment(t.dataset.archiveSend); return;
+  }
+});
 
 async function loadArchiveList(){
   var el = document.getElementById("archiveList");
@@ -1488,7 +1662,7 @@ async function loadArchiveList(){
     var j = await r.json();
     if (!j.ok) { el.innerHTML = ""; return; }
 
-    var items = j.matches.map(function(m){
+    archiveItems = j.matches.map(function(m){
       return { type:"match", id:m.matchId, dateIso:m.dateIso, home:m.home, away:m.away,
         homeScore:m.homeScore, awayScore:m.awayScore, league:m.league };
     });
@@ -1496,13 +1670,9 @@ async function loadArchiveList(){
     // Don't list the match that's already the main subject of this page —
     // it would appear twice, once as the header and again below.
     var currentId = (lastData && lastData.eventId) ? String(lastData.eventId) : null;
-    items = items.filter(function(it){ return String(it.id) !== currentId; });
-
-    items.sort(function(a,b){ return new Date(b.dateIso||0) - new Date(a.dateIso||0); });
-
-    if (!items.length){ el.innerHTML = ""; return; }
-    el.innerHTML = '<h3 class="archiveHeading">Eldri leikir</h3>'
-      + items.map(archiveItemHtml).join("");
+    archiveItems = archiveItems.filter(function(it){ return String(it.id) !== currentId; });
+    archiveItems.sort(function(a,b){ return new Date(b.dateIso||0) - new Date(a.dateIso||0); });
+    renderArchiveList();
   } catch(e){
     el.innerHTML = ""; // a missing archive shouldn't disturb the live page
   }
