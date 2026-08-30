@@ -899,6 +899,26 @@ body.show-en .en{display:block}
   font-size:.78rem;font-family:var(--sans);cursor:pointer}
 .showAllBtn:hover{border-color:var(--red);color:var(--text)}
 
+/* Embedded "Eldri leikir" list — same look as the archived-match cards
+   originally built for a separate /ynwa/leikir page, now folded directly
+   into the bottom of this one instead. Prefixed class names throughout
+   (archiveCard, not matchCard) since plain names like .score and .meta
+   are already taken by the live scorecard above. */
+#archiveList{margin-top:26px;padding-top:16px;border-top:1px solid var(--line2)}
+.archiveHeading{font-size:.7rem;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--muted);margin-bottom:10px}
+.archiveEmpty{color:var(--dim);padding:14px 0;font-size:.82rem}
+.archiveCard{display:flex;align-items:center;gap:14px;padding:14px 16px;margin-bottom:2px;
+  background:var(--panel);border:1px solid var(--line);border-radius:10px 10px 0 0;
+  text-decoration:none;color:inherit}
+.archiveCard:hover{border-color:var(--red)}
+.archiveCrestSide{flex:1;font-size:.9rem;font-weight:600}
+.archiveCrestSide.away{text-align:right}
+.archiveScore{font-weight:700;font-size:1.05rem;padding:0 6px;color:var(--text);white-space:nowrap}
+.archiveMeta{display:block;color:var(--dim);font-size:.68rem;padding:6px 16px 14px;
+  background:var(--panel);border:1px solid var(--line);border-top:none;
+  border-radius:0 0 10px 10px;margin-bottom:10px}
+
 /* The composer only exists when opened, so it gets a clear frame to
    show it's a distinct, temporary thing rather than page furniture. */
 .newCommentBtn{width:100%;padding:10px;margin-bottom:10px;border-radius:8px;
@@ -965,7 +985,6 @@ footer{margin-top:34px;padding-top:14px;border-top:1px solid var(--line);
     <button class="btn" id="toggleEn">Sýna enska textann</button>
     <button class="btn" id="toggleChat">Spjall</button>
     <button class="btn" id="refresh">Uppfæra núna</button>
-    <a class="btn" href="/ynwa/leikir">Eldri leikir</a>
     <span class="note" id="status"></span>
   </div>
   <p class="note" id="diag"></p>
@@ -973,6 +992,8 @@ footer{margin-top:34px;padding-top:14px;border-top:1px solid var(--line);
   <div class="feed" id="feed"></div>
   <button class="showAllBtn" id="showAll"></button>
   <div id="chat"></div>
+
+  <div id="archiveList"></div>
 
   <footer>
     <p><strong>YNWA</strong> — tilraun. Lýsingin er búin til sjálfvirkt úr
@@ -1424,6 +1445,69 @@ function forceRenderChat(){
   renderChatIfChanged();
 }
 
+/* The bottom-of-page content feed.
+
+   Deliberately built as a list of generic dated ITEMS, not a list of
+   matches. Today every item is type:"match", so it renders exactly as
+   a match list — but articles (match reports, transfer posts) are meant
+   to live in this same feed, interleaved by date, so a Forest match
+   report written after the Forest match appears above it. Building it
+   this way now means adding articles later is "write the editor", not
+   "rewrite the feed".
+
+   Articles will also get comment threads for free: comments.js keys
+   everything by an opaque content id and never assumes ESPN matches,
+   so an article carrying its own id works through the same endpoints. */
+function archiveItemHtml(item){
+  if (item.type === "article"){
+    // Not reachable yet — no article source exists. Here so the shape of
+    // the feed is settled, and so adding articles doesn't mean revisiting
+    // how the list itself works.
+    return '<a class="archiveCard" href="/ynwa?grein='+encodeURIComponent(item.id)+'">'
+      + '<div class="archiveCrestSide">'+esc(item.title||"")+'</div></a>'
+      + '<div class="archiveMeta">'+esc(item.kicker||"Grein")+' · '+dateIs(item.dateIso)+'</div>';
+  }
+  return '<a class="archiveCard" href="/ynwa?match='+encodeURIComponent(item.id)+'">'
+    + '<div class="archiveCrestSide">'+esc(item.home)+'</div>'
+    + '<div class="archiveScore">'+esc(item.homeScore)+' – '+esc(item.awayScore)+'</div>'
+    + '<div class="archiveCrestSide away">'+esc(item.away)+'</div></a>'
+    + '<div class="archiveMeta">'+esc(item.league||"")+' · '+dateIs(item.dateIso)+'</div>';
+}
+
+function dateIs(iso){
+  if (!iso) return "";
+  try { return new Date(iso).toLocaleDateString("is-IS", { day:"numeric", month:"long", year:"numeric" }); }
+  catch(e){ return ""; }
+}
+
+async function loadArchiveList(){
+  var el = document.getElementById("archiveList");
+  if (!el) return;
+  try{
+    var r = await fetch("/api/ynwa/archive");
+    var j = await r.json();
+    if (!j.ok) { el.innerHTML = ""; return; }
+
+    var items = j.matches.map(function(m){
+      return { type:"match", id:m.matchId, dateIso:m.dateIso, home:m.home, away:m.away,
+        homeScore:m.homeScore, awayScore:m.awayScore, league:m.league };
+    });
+
+    // Don't list the match that's already the main subject of this page —
+    // it would appear twice, once as the header and again below.
+    var currentId = (lastData && lastData.eventId) ? String(lastData.eventId) : null;
+    items = items.filter(function(it){ return String(it.id) !== currentId; });
+
+    items.sort(function(a,b){ return new Date(b.dateIso||0) - new Date(a.dateIso||0); });
+
+    if (!items.length){ el.innerHTML = ""; return; }
+    el.innerHTML = '<h3 class="archiveHeading">Eldri leikir</h3>'
+      + items.map(archiveItemHtml).join("");
+  } catch(e){
+    el.innerHTML = ""; // a missing archive shouldn't disturb the live page
+  }
+}
+
 async function loadComments(){
   if (!lastData || !lastData.ok) return;
   const el = document.getElementById("chat");
@@ -1788,6 +1872,11 @@ syncChatBtn();
 
 document.getElementById("refresh").addEventListener("click", load);
 load();
+// Once per page load, not per poll: the archive only changes when
+// something is archived, so refetching it every 20 seconds alongside the
+// live feed would be pure waste. Deliberately not awaited — a slow or
+// failing archive fetch must never hold up the live match rendering.
+loadArchiveList();
 </script>
 </body>
 </html>`;
