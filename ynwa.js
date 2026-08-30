@@ -495,7 +495,63 @@ function headerOf(summary) {
   };
 }
 
+/* Fetches and translates ONE specific match by its ESPN event id —
+   the same tryJson/headerOf/buildFeed pipeline the live page uses,
+   just without any of the live-polling/caching/countdown scheduling,
+   since archiving is a single, deliberate action, not a repeating
+   poll. Used only by the admin-triggered archive endpoint. */
+export async function fetchMatchForArchive(eventId, slug) {
+  const s = slug || ANY_SLUG;
+  const sum = await tryJson(`${SITE}/${s}/summary?event=${eventId}`);
+  if (!sum.ok) return { ok: false, reason: sum.note || "ESPN svaraði ekki." };
+  const summary = sum.data;
+  const header = headerOf(summary);
+  const feed = buildFeed(summary);
+  return {
+    ok: true,
+    eventId: String(eventId),
+    slug: s,
+    header,
+    feed,
+    untranslated: feed.filter((f) => !f.known).length,
+    fetchedAt: new Date().toISOString(),
+  };
+}
+
 /* ---------- routes ---------- */
+/* Sweeps every competition slug across a BACKWARD-looking date range,
+   collecting every FINISHED Liverpool match found — the admin-facing
+   counterpart to findMatch() above, which only ever looks forward for
+   the one current/next fixture. Reuses the exact same SLUGS/isLiverpool/
+   normalise/tryJson this whole fixture-hunt is built on, just pointed
+   at the past instead of the present. Still stops at the first outright
+   refusal rather than sweeping through the rest — the same reasoning as
+   findMatch(): a 403 means the whole IP, not just that one competition,
+   so continuing only digs the hole deeper. */
+export async function findRecentLiverpoolMatches(daysBack) {
+  const days = Number(daysBack) > 0 ? Number(daysBack) : 30;
+  const now = Date.now();
+  const from = new Date(now - days * 24 * 3600 * 1000);
+  const to = new Date(now);
+  const range = `${yyyymmdd(from)}-${yyyymmdd(to)}`;
+  const found = [];
+  let refusalNote = null;
+  for (const slug of SLUGS) {
+    const r = await tryJson(`${SITE}/${slug}/scoreboard?dates=${range}`);
+    if (!r.ok) { refusalNote = r.note; break; }
+    const evs = Array.isArray(r.data.events) ? r.data.events : [];
+    for (const ev of evs) {
+      const comp = (ev.competitions && ev.competitions[0]) || {};
+      if ((comp.competitors || []).some(isLiverpool)) {
+        const m = normalise(ev, slug);
+        if (m.state === "post") found.push(m);
+      }
+    }
+  }
+  found.sort((a, b) => Date.parse(b.date || 0) - Date.parse(a.date || 0)); // most recent first
+  return { matches: found, refusalNote };
+}
+
 export async function ynwaApi(req, res) {
   const debug = req.query.debug === "1";
   let diag = [];
@@ -696,6 +752,10 @@ export function ynwaPage(req, res) {
   res.set("Content-Type", "text/html; charset=utf-8").send(PAGE);
 }
 
+export function ynwaArchivePage(req, res) {
+  res.set("Content-Type", "text/html; charset=utf-8").send(ARCHIVE_LIST_PAGE);
+}
+
 /* ------------------------------------------------------------
    The page. Deliberately one static string with no build step,
    so this whole experiment is a single file that can be deleted
@@ -854,6 +914,25 @@ footer{margin-top:34px;padding-top:14px;border-top:1px solid var(--line);
 .demoBanner button{padding:5px 11px;border-radius:6px;border:1px solid #F6EB61;
   background:none;color:#F6EB61;font-size:.72rem;font-family:var(--sans);cursor:pointer}
 .demoBanner button:hover{background:rgba(246,235,97,.12)}
+
+/* Informational, not a warning — unlike the demo banner, this isn't
+   flagging fake data, just orienting someone who followed a link to
+   an old match. */
+.archiveBanner{margin:0 0 16px;padding:10px 14px;border:1px solid var(--line2);
+  border-radius:9px;background:var(--panel);font-size:.74rem;letter-spacing:.04em;
+  color:var(--muted)}
+.archiveBanner a{color:var(--text);text-decoration:underline}
+
+.adminArchive{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0}
+.adminArchive input{flex:1;min-width:160px}
+.adminArchive button{padding:7px 14px;border-radius:7px;border:none;background:var(--red);
+  color:#fff;font-size:.78rem;cursor:pointer;font-family:var(--sans)}
+.adminArchive #archiveMsg{font-size:.74rem;color:var(--muted)}
+.archiveResultRow{display:flex;justify-content:space-between;align-items:center;gap:10px;
+  padding:8px 10px;border:1px solid var(--line);border-radius:7px;margin-top:6px;
+  background:var(--panel);font-size:.78rem;color:var(--text)}
+.archiveResultRow button{padding:5px 11px;border-radius:6px;border:none;background:var(--red);
+  color:#fff;font-size:.72rem;cursor:pointer;font-family:var(--sans)}
 </style>
 </head>
 <body>
@@ -871,6 +950,7 @@ footer{margin-top:34px;padding-top:14px;border-top:1px solid var(--line);
     <button class="btn" id="toggleEn">Sýna enska textann</button>
     <button class="btn" id="toggleChat">Spjall</button>
     <button class="btn" id="refresh">Uppfæra núna</button>
+    <a class="btn" href="/ynwa/leikir">Eldri leikir</a>
     <span class="note" id="status"></span>
   </div>
   <p class="note" id="diag"></p>
@@ -1062,8 +1142,12 @@ function render(d){
   const ko = h.kickoff ? Date.parse(h.kickoff) : null;
   const soon = ko != null && Date.now() > ko - 15 * 60000 && Date.now() < ko + 4 * 3600000;
   const wait = h.state === "in" ? 20000 : (soon ? 30000 : 120000);
-  clearTimeout(timer);
-  timer = setTimeout(load, wait);
+  // An archived match is frozen by definition — no reason to keep
+  // re-polling data that will never change again.
+  if (typeof archiveMatchId === "undefined" || !archiveMatchId){
+    clearTimeout(timer);
+    timer = setTimeout(load, wait);
+  }
   } finally {
     restoreComposers(composerSnapshot);
   }
@@ -1557,11 +1641,109 @@ if (isDemo){
   banner.className = "demoBanner";
   banner.innerHTML = "SÝNIDÆMI — gervi gögn til að prófa síðuna, ekki alvöru leikur. "
     + '<button id="demoRestart">Endurræsa</button>';
-  document.querySelector(".wrap").insertBefore(banner, document.querySelector(".head"));
+  // .head was never a real class in this page (it's a bare <header>
+  // element) — insertBefore(node, null) silently APPENDS rather than
+  // inserting at the top, so this banner has actually been landing at
+  // the bottom of the page this whole time, not announcing itself first.
+  document.querySelector(".wrap").insertBefore(banner, document.querySelector("header"));
   setTimeout(function(){
     var b = document.getElementById("demoRestart");
     if (b) b.addEventListener("click", demoRestart);
   }, 0);
+}
+
+// ?match=<espn-id> — view one archived match. Fetched ONCE from our own
+// store, never ESPN again, and never re-polled: an archived match is
+// frozen by definition, so there's nothing new to check for.
+var archiveMatchId = new URLSearchParams(location.search).get("match");
+if (!isDemo && archiveMatchId){
+  load = async function(){
+    try{
+      const r = await fetch("/api/ynwa/archive/match?event="+encodeURIComponent(archiveMatchId));
+      const d = await r.json();
+      if (d.ok === false){
+        document.getElementById("status").textContent = d.reason || "Fann ekki leikinn í safninu.";
+        return;
+      }
+      render(d);
+    } catch(e){
+      document.getElementById("status").textContent = "Næ ekki í leikinn úr safninu.";
+    }
+    await loadComments();
+    // Deliberately no setTimeout(load, ...) here — this is a one-time
+    // fetch of frozen data, not a poll.
+  };
+  var refreshBtn = document.getElementById("refresh");
+  if (refreshBtn) refreshBtn.style.display = "none";
+  var archBanner = document.createElement("div");
+  archBanner.className = "archiveBanner";
+  archBanner.innerHTML = "ELDRI LEIKUR — lokið, lýsing fryst. "
+    + '<a href="/ynwa/leikir">Sjá alla eldri leiki</a>';
+  document.querySelector(".wrap").insertBefore(archBanner, document.querySelector("header"));
+}
+
+// Admin-only: fetch and permanently archive any finished match by its
+// ESPN event id — either typed in directly, or found via the search
+// below and archived in one click. No automatic detection — this
+// project deliberately chose "the admin decides what's worth keeping"
+// over trying to guess the exact moment a match ends (see the earlier
+// three-options discussion this whole feature came out of).
+if (adminKey){
+  var archivePanel = document.createElement("div");
+  archivePanel.className = "adminArchive";
+  archivePanel.innerHTML = '<input class="input" id="archiveEventId" placeholder="ESPN leikjaauðkenni (t.d. 401879319)">'
+    + '<button id="archiveSaveBtn">Vista leik í safn</button>'
+    + '<input class="input" id="archiveDays" placeholder="dagar aftur (sjálfgefið 45)" style="max-width:170px">'
+    + '<button id="archiveSearchBtn">Finna nýlega leiki</button>'
+    + '<span id="archiveMsg"></span>'
+    + '<div id="archiveResults"></div>';
+  var scoreEl0 = document.getElementById("score");
+  if (scoreEl0) scoreEl0.insertAdjacentElement("afterend", archivePanel);
+
+  async function saveMatchToArchive(id, msgEl){
+    if (!id){ msgEl.textContent = "Sláðu inn leikjaauðkenni."; return; }
+    msgEl.textContent = "Sæki og vista…";
+    try{
+      var r = await fetch("/api/ynwa/archive?key="+encodeURIComponent(adminKey)+"&event="+encodeURIComponent(id), { method:"POST" });
+      var j = await r.json();
+      msgEl.textContent = j.ok
+        ? ("Vistað: " + j.home + " " + j.homeScore + "–" + j.awayScore + " " + j.away)
+        : (j.reason || "Mistókst.");
+    } catch(e){ msgEl.textContent = "Villa kom upp."; }
+  }
+
+  document.getElementById("archiveSaveBtn").addEventListener("click", function(){
+    var id = document.getElementById("archiveEventId").value.trim();
+    saveMatchToArchive(id, document.getElementById("archiveMsg"));
+  });
+
+  document.getElementById("archiveSearchBtn").addEventListener("click", async function(){
+    var resultsEl = document.getElementById("archiveResults");
+    var msg = document.getElementById("archiveMsg");
+    var days = document.getElementById("archiveDays").value.trim() || "45";
+    msg.textContent = "Leita að nýlegum leikjum…";
+    resultsEl.innerHTML = "";
+    try{
+      var r = await fetch("/api/ynwa/archive/search?key="+encodeURIComponent(adminKey)+"&days="+encodeURIComponent(days));
+      var j = await r.json();
+      if (!j.ok){ msg.textContent = j.reason || "Mistókst að leita."; return; }
+      msg.textContent = j.matches.length
+        ? ("Fann " + j.matches.length + " leiki." + (j.refusalNote ? " (ESPN stöðvaði leitina snemma — listinn gæti verið ófullkominn.)" : ""))
+        : "Engir nýlegir leikir fundust á þessu tímabili.";
+      resultsEl.innerHTML = j.matches.map(function(m){
+        return '<div class="archiveResultRow">'
+          + '<span>' + esc(m.name) + ' — ' + esc((m.date||"").slice(0,10)) + '</span>'
+          + '<button data-archive-found="' + esc(m.id) + '">Vista</button>'
+          + '</div>';
+      }).join("");
+    } catch(e){ msg.textContent = "Villa kom upp við leit."; }
+  });
+
+  document.getElementById("archiveResults").addEventListener("click", function(e){
+    if (e.target.dataset.archiveFound){
+      saveMatchToArchive(e.target.dataset.archiveFound, document.getElementById("archiveMsg"));
+    }
+  });
 }
 
 
@@ -1591,6 +1773,85 @@ syncChatBtn();
 
 document.getElementById("refresh").addEventListener("click", load);
 load();
+</script>
+</body>
+</html>`;
+
+/* ------------------------------------------------------------
+   The "Eldri leikir" list — a genuinely separate, simpler page
+   (a list of matches, not a match viewer), rather than shoehorning
+   list-mode into the same template the live page uses. Shares the
+   same colour variables for visual consistency.
+   ------------------------------------------------------------ */
+const ARCHIVE_LIST_PAGE = `<!doctype html>
+<html lang="is">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Eldri leikir — YNWA</title>
+<style>
+:root{
+  --bg:#0B0B0D; --panel:#141417; --line:#242429; --line2:#33333A;
+  --text:#F2F2F4; --muted:#A2A2AC; --dim:#74747E; --faint:#4A4A53;
+  --red:#C8102E; --redbright:#FF2D48; --gold:#F6EB61;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);
+  padding:20px 16px 60px;max-width:760px;margin:0 auto}
+a{color:inherit;text-decoration:none}
+.back{display:inline-block;margin-bottom:18px;color:var(--muted);font-size:.82rem}
+.back:hover{color:var(--text)}
+h1{font-size:1.6rem;margin:0 0 4px}
+.sub{color:var(--muted);font-size:.85rem;margin:0 0 22px}
+.empty{color:var(--dim);padding:30px 0;text-align:center;font-size:.9rem}
+.matchCard{display:flex;align-items:center;gap:14px;padding:14px 16px;margin-bottom:2px;
+  background:var(--panel);border:1px solid var(--line);border-radius:10px 10px 0 0}
+.matchCard:hover{border-color:var(--red)}
+.crestSide{flex:1;font-size:.92rem;font-weight:600}
+.crestSide.away{text-align:right}
+.score{font-weight:700;font-size:1.15rem;padding:0 6px;color:var(--text);white-space:nowrap}
+.meta{display:block;color:var(--dim);font-size:.7rem;padding:6px 16px 14px;
+  background:var(--panel);border:1px solid var(--line);border-top:none;
+  border-radius:0 0 10px 10px;margin-bottom:10px}
+</style>
+</head>
+<body>
+  <a class="back" href="/ynwa">← Til baka í beina lýsingu</a>
+  <h1>Eldri leikir</h1>
+  <p class="sub">Leikir sem lokið er — lýsing og spjall varðveitt.</p>
+  <div id="list"><p class="empty">Sæki leiki…</p></div>
+
+<script>
+function esc(s){ return String(s||"").replace(/[&<>"']/g, function(c){
+  return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];
+}); }
+function dateIs(iso){
+  if (!iso) return "";
+  try {
+    return new Date(iso).toLocaleDateString("is-IS", { day:"numeric", month:"long", year:"numeric" });
+  } catch(e){ return ""; }
+}
+async function loadList(){
+  var el = document.getElementById("list");
+  try{
+    const r = await fetch("/api/ynwa/archive");
+    const j = await r.json();
+    if (!j.ok) { el.innerHTML = '<p class="empty">Næ ekki í eldri leiki í augnablikinu.</p>'; return; }
+    if (!j.matches.length) { el.innerHTML = '<p class="empty">Engir leikir komnir í safn ennþá.</p>'; return; }
+    el.innerHTML = j.matches.map(function(m){
+      return '<a class="matchCard" href="/ynwa?match='+encodeURIComponent(m.matchId)+'">'
+        + '<div class="crestSide">'+esc(m.home)+'</div>'
+        + '<div class="score">'+esc(m.homeScore)+' – '+esc(m.awayScore)+'</div>'
+        + '<div class="crestSide away">'+esc(m.away)+'</div>'
+        + '</a>'
+        + '<div class="meta">'+esc(m.league)+' · '+dateIs(m.dateIso)+'</div>';
+    }).join("");
+  } catch(e){
+    el.innerHTML = '<p class="empty">Næ ekki í eldri leiki í augnablikinu.</p>';
+  }
+}
+loadList();
 </script>
 </body>
 </html>`;

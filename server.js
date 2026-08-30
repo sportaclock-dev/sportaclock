@@ -3,8 +3,9 @@ import path from "path";
 import { fileURLToPath } from "url";
 import nflRoute from "./nfl.js";
 import golfRoute from "./golf.js";
-import { ynwaApi, ynwaPage, ynwaProbe } from "./ynwa.js";
+import { ynwaApi, ynwaPage, ynwaProbe, ynwaArchivePage } from "./ynwa.js";
 import { commentsGet, commentsPost, commentsDelete } from "./comments.js";
+import { archiveList, archiveOne, archiveCreate, archiveSearch } from "./archive.js";
 import { espnTry } from "./espn.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -460,7 +461,12 @@ app.get("/api/ynwa/probe", ynwaProbe);
 app.get("/api/ynwa/comments", commentsGet);
 app.post("/api/ynwa/comments", commentsPost);
 app.delete("/api/ynwa/comments", commentsDelete);
+app.get("/api/ynwa/archive", archiveList);
+app.get("/api/ynwa/archive/match", archiveOne);
+app.post("/api/ynwa/archive", archiveCreate);
+app.get("/api/ynwa/archive/search", archiveSearch);
 app.get("/ynwa", ynwaPage);
+app.get("/ynwa/leikir", ynwaArchivePage);
 
 // Serve the built frontend
 app.use(express.static(path.join(__dirname, "dist")));
