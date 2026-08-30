@@ -332,7 +332,12 @@ const TEMPLATES = {
     const s = scoreFrom(ev.text);
     return `MARK ÚR VÍTASPYRNU! ${who(ev)} (${team(ev)})${s ? ` — ${s}` : ""}.`;
   },
-  "penalty---missed": (ev) => `Víti klikkar — ${who(ev)} (${team(ev)}).`,
+  "penalty---missed": (ev) => {
+    // Same regex already proven for shot-on-target — a saved penalty
+    // uses the identical "saved ... by NAME (" phrasing in ESPN's text.
+    const k = keeperFrom(ev.text);
+    return `Víti klikkar — ${who(ev)} (${team(ev)}).` + (k ? ` ${k} ver.` : "");
+  },
   "own-goal": (ev) => `SJÁLFSMARK — ${who(ev)} (${team(ev)}).`,
 
   "shot-on-target": (ev) => {
@@ -347,19 +352,29 @@ const TEMPLATES = {
   },
   "shot-blocked": (ev) => {
     const a = who(ev, 1);
-    return `${who(ev)} (${team(ev)}) skýtur en varnarmaður blokkar` + (a ? ` eftir sendingu frá ${a}` : "") + ".";
+    return `${who(ev)} (${team(ev)}) skýtur en varnarmaður ver boltann` + (a ? ` eftir sendingu frá ${a}` : "") + ".";
   },
   "shot-woodwork": (ev) => {
     const a = who(ev, 1);
     return `${who(ev)} (${team(ev)}) skýtur í stöngina` + (a ? ` eftir sendingu frá ${a}` : "") + ".";
   },
 
-  foul: (ev) => `Brot — ${who(ev)} (${team(ev)}).`,
+  foul: (ev) => `Brot — ${who(ev)} (${team(ev)}) brýtur af sér.`,
   offside: (ev) => `Rangstaða — ${team(ev)}.`,
-  "corner-awarded": (ev) => `Horn — ${team(ev)}.`,
-  "yellow-card": (ev) => `Gult spjald — ${who(ev)} (${team(ev)}).`,
-  "red-card": (ev) => `RAUTT SPJALD — ${who(ev)} (${team(ev)}).`,
-  "second-yellow": (ev) => `Rautt spjald (annað gult) — ${who(ev)} (${team(ev)}).`,
+  "corner-awarded": (ev) => {
+    // who(ev) — participants[0] — is currently read for every OTHER
+    // event type (the fouling player, the scorer...) but was never
+    // read here at all, even though ESPN populates it the same way:
+    // the player who conceded the corner. Same "the data was already
+    // there" fix as the shot-assist one.
+    const conceder = who(ev);
+    return conceder
+      ? `Horn — ${team(ev)}. ${conceder} gaf hornspyrnuna.`
+      : `Horn — ${team(ev)}.`;
+  },
+  "yellow-card": (ev) => `Gult spjald — ${who(ev)} (${team(ev)}) fær gult spjald.`,
+  "red-card": (ev) => `RAUTT SPJALD — ${who(ev)} (${team(ev)}) er sýnt beint rautt spjald.`,
+  "second-yellow": (ev) => `Rautt spjald (annað gult) — ${who(ev)} (${team(ev)}) fær sitt annað gula spjald og því kominn með rautt.`,
 
   // participants are [kemur inn á, fer út af]
   substitution: (ev) =>
