@@ -1,5 +1,5 @@
 import {
-  TEAMS, DIVISIONS, divisionOf, shortWhen, longWhen, weekLabel, weekKey,
+  TEAMS, DIVISIONS, divisionOf, shortWhen, longWhen, weekLabel, weekKey, dateIs,
   POSITIONS, ROSTER_GROUPS, KEY_PLAYERS, GLOSSARY,
 } from "./content.js";
 import { videoFor, searchUrl } from "./data.js";
@@ -15,7 +15,7 @@ import { videoFor, searchUrl } from "./data.js";
    ============================================================ */
 
 export const BASE = "/nfl";
-const V = "4"; // bump to bust the CSS/JS cache
+const V = "5"; // bump to bust the CSS/JS cache
 
 export function esc(s) {
   return String(s ?? "")
@@ -50,6 +50,7 @@ function layout({ title, description, active, ticker, body }) {
     ["byrja", `${BASE}#byrja`, "Byrja hér"],
     ["leikir", `${BASE}/leikir`, "Leikir"],
     ["lid", `${BASE}/lid`, "Lið"],
+    ["greinar", `${BASE}/greinar`, "Greinar"],
     ["ordabok", `${BASE}/ordabok`, "Orðabók"],
   ].map(([id, href, label]) =>
     `<a href="${href}"${active === id ? ' aria-current="page"' : ""}>${label}</a>`).join("");
@@ -338,7 +339,7 @@ function explainer() {
 }
 
 /* ---------- pages ---------- */
-export function frontPage({ games, current, meta, standings }) {
+export function frontPage({ games, current, meta, standings, articles }) {
   const now = Date.now();
   const next = games.find((g) => g.state === "pre" && new Date(g.date).getTime() > now);
   const wk = current || (next ? { type: next.type, week: next.week } : { type: 2, week: 1 });
@@ -367,6 +368,7 @@ export function frontPage({ games, current, meta, standings }) {
   </div>
 </section>
 ${explainer()}
+${latestArticles(articles)}
 ${gamesSection({ games, current, meta, type: wk.type, week: wk.week })}
 ${teamsSection(meta, standings)}`;
 
@@ -533,6 +535,66 @@ export function teamPage({ ab, games, current, meta, standings, detail, roster }
     active: "lid",
     ticker: ticker(games, current),
     body,
+  });
+}
+
+/* ---------- articles ----------
+   Article HTML arrives already rendered and locked down by articles.js
+   (raw HTML escaped, links limited). It is the ONE place in this file
+   where markup is inserted unescaped, which is why it's built there. */
+const articleHref = (slug) => `${BASE}/greinar/${slug}`;
+
+function articleCards(list) {
+  return `<ul class="articles">${list.map((a) => `<li>
+    <a class="card article-card" href="${articleHref(a.slug)}">
+      <span class="article-date">${esc(dateIs(a.date))}</span>
+      <span class="article-title">${esc(a.title)}</span>
+      <span class="article-more">Lesa ${ICON.chevron}</span>
+    </a></li>`).join("")}</ul>`;
+}
+
+function latestArticles(articles) {
+  if (!articles?.length) return "";
+  return `<section id="greinar" class="band band-tight">
+  <div class="wrap">
+    <div class="section-head">
+      <h2 class="display">Nýjustu greinar</h2>
+      <p class="muted"><a href="${BASE}/greinar">Allar greinar</a></p>
+    </div>
+    ${articleCards(articles.slice(0, 3))}
+  </div>
+</section>`;
+}
+
+export function articlesPage({ games, current, articles }) {
+  return layout({
+    title: "Greinar | NFL á íslensku",
+    description: "Greinar um NFL á íslensku: reglurnar, leikurinn og liðin útskýrð.",
+    active: "greinar",
+    ticker: ticker(games, current),
+    body: `<section class="band"><div class="wrap">
+      <div class="section-head"><h1 class="display">Greinar</h1>
+      <p class="muted">Leikurinn útskýrður, eitt atriði í einu.</p></div>
+      ${articles.length ? articleCards(articles) : '<p class="lede">Engar greinar hafa birst enn. Kíktu aftur fljótlega.</p>'}
+    </div></section>`,
+  });
+}
+
+export function articlePage({ games, current, article, articles }) {
+  const others = articles.filter((a) => a.slug !== article.slug).slice(0, 3);
+  return layout({
+    title: `${article.title} | NFL á íslensku`,
+    description: article.title,
+    active: "greinar",
+    ticker: ticker(games, current),
+    body: `<article class="band"><div class="wrap article-wrap">
+      <nav class="crumbs crumbs-dark" aria-label="Brauðmolar"><a href="${BASE}/greinar">Greinar</a>${ICON.chevron}<span>${esc(dateIs(article.date))}</span></nav>
+      <h1 class="display article-h1">${esc(article.title)}</h1>
+      <div class="bars bars-dark" aria-hidden="true"><span></span><span></span><span></span></div>
+      <div class="prose">${article.html}</div>
+    </div></article>
+    ${others.length ? `<section class="band band-tight"><div class="wrap">
+      <h2 class="display">Fleiri greinar</h2>${articleCards(others)}</div></section>` : ""}`,
   });
 }
 

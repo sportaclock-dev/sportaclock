@@ -350,3 +350,37 @@ abbr { text-decoration: none; }
   .learn-tabs button { font-size: 20px; padding: 0 16px; }
   .tag-xl { font-size: 30px; }
 }
+
+/* ---------- articles ---------- */
+.band-tight { padding-top: 0; }
+.articles { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 24px; }
+.article-card { display: flex; flex-direction: column; gap: 10px; height: 100%; padding: 24px 24px 18px; color: var(--navy); text-decoration: none; transition: transform 0.12s ease, box-shadow 0.12s ease; }
+.article-card:hover { color: var(--navy); transform: translate(-2px, -2px); box-shadow: 8px 8px 0 var(--red); }
+.article-date { font-size: 14px; font-weight: 700; color: var(--muted); }
+.article-title { font-family: var(--display); font-weight: 900; font-size: clamp(30px, 2.6vw, 38px); line-height: 1; text-transform: uppercase; }
+.article-more { margin-top: auto; display: inline-flex; align-items: center; gap: 4px; min-height: 32px; font-weight: 700; color: var(--red); }
+
+.article-wrap { max-width: 860px; }
+.crumbs-dark a { color: var(--red); }
+.crumbs-dark { color: var(--muted); }
+.article-h1 { margin-top: 8px; font-size: clamp(44px, 6.4vw, 88px); }
+.bars-dark { margin: 24px 0 8px; }
+.bars-dark span:nth-child(2) { background: var(--navy); }
+
+.prose { font-size: clamp(18px, 1.4vw, 20px); line-height: 1.65; color: var(--body); }
+.prose > * { max-width: 68ch; }
+.prose h2, .prose h3, .prose h4 {
+  margin: 1.8em 0 0.4em; color: var(--navy); font-family: var(--display); font-weight: 900;
+  line-height: 0.95; text-transform: uppercase; transform: skewX(-4deg); transform-origin: left bottom;
+}
+.prose h2 { font-size: clamp(32px, 3.2vw, 44px); }
+.prose h3 { font-size: clamp(26px, 2.4vw, 32px); }
+.prose h4 { font-size: 24px; }
+.prose p, .prose ul, .prose ol, .prose blockquote { margin: 0 0 1em; }
+.prose strong { color: var(--navy); }
+.prose ul, .prose ol { padding-left: 1.3em; }
+.prose li { margin: 0.3em 0; }
+.prose li::marker { color: var(--red); font-weight: 700; }
+.prose blockquote { border-left: 6px solid var(--gold); padding: 4px 0 4px 20px; color: var(--navy); }
+.prose code { font-size: 0.9em; background: var(--pale); padding: 1px 6px; }
+.prose hr { border: 0; border-top: 3px solid var(--line); margin: 2em 0; }

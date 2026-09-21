@@ -95,6 +95,13 @@ export function shortWhen(iso) {
   return `${DAYS_SHORT[p.dow]} ${p.hm}`;
 }
 
+// "21. september 2026" from "2026-09-21"
+export function dateIs(ymd) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(ymd || ""));
+  if (!m) return "";
+  return `${Number(m[3])}. ${MONTHS[Number(m[2]) - 1]} ${m[1]}`;
+}
+
 // "mánudaginn 21. september kl. 00:20"
 export function longWhen(iso) {
   const p = partsIs(iso);

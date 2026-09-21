@@ -8,7 +8,9 @@ import {
 } from "./data.js";
 import {
   BASE, frontPage, gamesPage, teamsPage, teamPage, glossaryPage, errorPage,
+  articlesPage, articlePage,
 } from "./render.js";
+import { getArticles, getArticle } from "./articles.js";
 /* ============================================================
    NFL á íslensku — a self-contained experiment at /nfl.
 
@@ -61,9 +63,41 @@ export function mountNflIs(app) {
   app.use(`${BASE}/static`, express.static(path.join(here, "public"), { maxAge: "1h" }));
 
   app.get(BASE, wrap(async (req, res) => {
-    const d = await common();
+    // Articles are a bonus on the front page: if GitHub is slow, render
+    // without them rather than make the whole page wait.
+    const [d, articles] = await Promise.all([
+      common(),
+      Promise.race([getArticles(), new Promise((r) => setTimeout(() => r([]), 1500))]),
+    ]);
     if (!d.games.length) return send(res, errorPage("Leikjadagskráin náðist ekki frá ESPN í augnablikinu. Reyndu aftur eftir smá stund."), 10);
-    send(res, frontPage(d));
+    send(res, frontPage({ ...d, articles }));
+  }));
+
+  app.get(`${BASE}/greinar`, wrap(async (req, res) => {
+    const [{ games }, articles] = await Promise.all([getGames(), getArticles()]);
+    send(res, articlesPage({ games: games || [], current: null, articles }), 60);
+  }));
+
+  app.get(`${BASE}/greinar/:slug`, wrap(async (req, res) => {
+    const [{ games }, articles, article] = await Promise.all([getGames(), getArticles(), getArticle(req.params.slug)]);
+    if (!article) {
+      return res.status(404).type("html").send(errorPage("Þessi grein fannst ekki. Hún gæti hafa verið fjarlægð eða slóðin er röng."));
+    }
+    send(res, articlePage({ games: games || [], current: null, article, articles }), 60);
+  }));
+
+  // JSON for anything else that wants the articles.
+  app.get(`${BASE}/api/greinar`, wrap(async (req, res) => {
+    const articles = await getArticles();
+    res.set("Cache-Control", "public, max-age=60");
+    res.json(articles.map(({ title, slug, date }) => ({ title, slug, date })));
+  }));
+
+  app.get(`${BASE}/api/greinar/:slug`, wrap(async (req, res) => {
+    const a = await getArticle(req.params.slug);
+    if (!a) return res.status(404).json({ error: "not found" });
+    res.set("Cache-Control", "public, max-age=60");
+    res.json(a);
   }));
 
   app.get(`${BASE}/leikir`, wrap(async (req, res) => {
