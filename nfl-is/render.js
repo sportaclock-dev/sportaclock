@@ -15,7 +15,7 @@ import { videoFor, searchUrl } from "./data.js";
    ============================================================ */
 
 export const BASE = "/nfl";
-const V = "2"; // bump to bust the CSS/JS cache
+const V = "3"; // bump to bust the CSS/JS cache
 
 export function esc(s) {
   return String(s ?? "")
