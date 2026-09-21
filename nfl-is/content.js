@@ -195,3 +195,62 @@ export const GLOSSARY = [
   ["Rookie", "Nýliði, leikmaður á sínu fyrsta tímabili í deildinni."],
   ["Draft", "Nýliðavalið á vorin. Lakasta lið síðasta tímabils velur fyrst."],
 ];
+
+/* ---------- player profiles ----------
+   ESPN's stat names, labelled by hand. A stat we have no Icelandic label
+   for is left out rather than shown in English. "interceptions" means the
+   opposite for a quarterback (thrown) and a defender (caught), so it is
+   looked up by position first. */
+export const STAT_LABELS = {
+  passingYards: "Kastjardar",
+  passingTouchdowns: "Touchdown-köst",
+  "interceptions@QB": "Köst sem vörnin greip",
+  QBRating: "QB-einkunn",
+  completionPct: "Heppnuð köst",
+  rushingAttempts: "Hlaup",
+  rushingYards: "Hlaupajardar",
+  rushingTouchdowns: "Touchdown á hlaupum",
+  yardsPerRushAttempt: "Jardar á hlaup",
+  receptions: "Gripin köst",
+  receivingYards: "Móttökujardar",
+  receivingTouchdowns: "Touchdown eftir grip",
+  yardsPerReception: "Jardar á grip",
+  soloTackles: "Tæklingar",
+  totalTackles: "Tæklingar",
+  sacks: "Sacks",
+  fumblesForced: "Þvinguð fumble",
+  interceptions: "Interceptions",
+  passesDefended: "Varin köst",
+  fieldGoalPct: "Field goal nýting",
+  extraPointPct: "Aukastiga nýting",
+  longFieldGoalMade: "Lengsta field goal",
+  totalKickingPoints: "Stig",
+  punts: "Punt",
+  grossAvgPuntYards: "Meðallengd punta",
+  longPunt: "Lengsta punt",
+  puntsInside20: "Punt inn fyrir 20 jarda",
+};
+const PERCENT = new Set(["completionPct", "fieldGoalPct", "extraPointPct"]);
+const YARDS = new Set(["longFieldGoalMade", "longPunt", "grossAvgPuntYards"]);
+
+export function statLabel(name, pos) {
+  return STAT_LABELS[`${name}@${pos}`] || STAT_LABELS[name] || null;
+}
+
+// [number, unit]: "83.3" -> ["83,3", "%"], "54.5" -> ["54,5", "jardar"]. Decimal comma.
+export function statValue(name, value) {
+  const v = String(value ?? "").replace(/,/g, "").replace(".", ",");
+  if (PERCENT.has(name)) return [v, "%"];
+  if (YARDS.has(name)) return [v, "jardar"];
+  return [v, ""];
+}
+
+export const cm = (inches) => (inches ? Math.round(inches * 2.54) : null);
+export const kg = (lb) => (lb ? Math.round(lb * 0.45359237) : null);
+export const feet = (inches) => (inches ? `${Math.floor(inches / 12)}'${inches % 12}"` : "");
+
+// From ESPN's "10th Season": 1 is a rookie.
+export function experience(season) {
+  if (!season) return "";
+  return season === 1 ? "Nýliði" : `${season}. tímabil`;
+}

@@ -1,14 +1,14 @@
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
-import { teamKey, parseWeekKey, weekKey } from "./content.js";
+import { teamKey, parseWeekKey, weekKey, KEY_PLAYERS } from "./content.js";
 import {
-  getGames, getTeamsMeta, getStandings, getTeamDetail, getRoster,
+  getGames, getTeamsMeta, getStandings, getTeamDetail, getRoster, getAthlete, findInCachedRosters,
   pollHighlights, cacheStatus,
 } from "./data.js";
 import {
   BASE, frontPage, gamesPage, teamsPage, teamPage, glossaryPage, errorPage,
-  articlesPage, articlePage,
+  articlesPage, articlePage, playerPage, playerHref,
 } from "./render.js";
 import { getArticles, getArticle } from "./articles.js";
 /* ============================================================
@@ -117,6 +117,34 @@ export function mountNflIs(app) {
     if (req.params.team !== ab.toLowerCase()) return res.redirect(301, `${BASE}/lid/${ab.toLowerCase()}`);
     const [d, detail, roster] = await Promise.all([common(), getTeamDetail(ab), getRoster(ab)]);
     send(res, teamPage({ ...d, ab, detail, roster }), 120);
+  }));
+
+  // /nfl/lid/kc/3139477-patrick-mahomes. The number is ESPN's athlete id and
+  // the only part that matters; the name is for people and gets corrected.
+  app.get(`${BASE}/lid/:team/:player`, wrap(async (req, res) => {
+    const ab = teamKey(req.params.team);
+    const m = /^(\d{1,12})(?:-[a-z0-9-]*)?$/.exec(req.params.player);
+    const notFound = () => res.status(404).type("html").send(errorPage("Þessi leikmaður fannst ekki í hópnum."));
+    if (!ab || !m) return notFound();
+    const id = m[1];
+    const find = (roster) => Object.values(roster?.groups || {}).flat().find((p) => p.id === id);
+
+    // ESPN is only asked about ids already on a roster. A made-up id would
+    // come back 404, espn.js counts that as a refusal, and three of those
+    // would pause golf, the NFL tab and YNWA for ten minutes.
+    const [d, roster] = await Promise.all([common(), getRoster(ab)]);
+    const player = find(roster);
+    if (!player) {
+      // Traded or released: look in the rosters already in memory. No call.
+      const moved = findInCachedRosters(id);
+      if (moved) return res.redirect(301, playerHref(moved.ab, moved.player));
+      return notFound();
+    }
+    const canonical = playerHref(ab, player);
+    if (req.path !== canonical) return res.redirect(301, canonical);
+    const athlete = await getAthlete(id);
+    const keyText = (KEY_PLAYERS[ab] || []).find((k) => k.name === player.name)?.text || "";
+    send(res, playerPage({ ...d, ab, player, athlete, keyText }), 300);
   }));
 
   app.get(`${BASE}/ordabok`, wrap(async (req, res) => {

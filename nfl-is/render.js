@@ -1,6 +1,7 @@
 import {
   TEAMS, DIVISIONS, divisionOf, shortWhen, longWhen, weekLabel, weekKey, dateIs,
   POSITIONS, ROSTER_GROUPS, KEY_PLAYERS, GLOSSARY,
+  statLabel, statValue, cm, kg, feet, experience,
 } from "./content.js";
 import { videoFor, searchUrl } from "./data.js";
 /* ============================================================
@@ -15,7 +16,7 @@ import { videoFor, searchUrl } from "./data.js";
    ============================================================ */
 
 export const BASE = "/nfl";
-const V = "5"; // bump to bust the CSS/JS cache
+const V = "7"; // bump to bust the CSS/JS cache
 
 export function esc(s) {
   return String(s ?? "")
@@ -474,7 +475,7 @@ export function teamPage({ ab, games, current, meta, standings, detail, roster }
     if (!list?.length) return "";
     const rows = list
       .slice().sort((a, b) => (Number(a.jersey) || 999) - (Number(b.jersey) || 999))
-      .map((p) => `<tr><td class="num">${esc(p.jersey)}</td><td>${esc(p.name)}</td><td><abbr title="${esc(POSITIONS[p.pos] || p.pos)}">${esc(p.pos)}</abbr> <span class="muted">${esc(POSITIONS[p.pos] || "")}</span></td><td class="hide-sm">${esc(p.age ?? "")}</td><td class="hide-sm muted">${esc(p.college)}</td></tr>`)
+      .map((p) => `<tr><td class="num">${esc(p.jersey)}</td><td>${playerCell(ab, p)}</td><td><abbr title="${esc(POSITIONS[p.pos] || p.pos)}">${esc(p.pos)}</abbr> <span class="muted">${esc(POSITIONS[p.pos] || "")}</span></td><td class="hide-sm">${esc(p.age ?? "")}</td><td class="hide-sm muted">${esc(p.college)}</td></tr>`)
       .join("");
     return `<details class="roster"${key === "offense" ? " open" : ""}>
       <summary>${esc(label)} <span class="muted">(${list.length})</span></summary>
@@ -509,11 +510,12 @@ export function teamPage({ ab, games, current, meta, standings, detail, roster }
     </section>
     ${keys.length ? `<section>
       <h2 class="display">Helstu leikmenn</h2>
-      <div class="players">${keys.map((k) => `<div class="card player-card">
+      <div class="players">${keys.map((k) => `<a class="card player-card" href="${k.p.id ? esc(playerHref(ab, k.p)) : "#"}">
+        ${k.p.headshot ? `<img class="pc-shot" src="${esc(shot(k.p.headshot, 280))}" alt="" width="140" height="102" loading="lazy">` : ""}
         <div class="pc-num" style="color:${esc(color)}">${esc(k.p.jersey)}</div>
         <div class="pc-name">${esc(k.p.name)}</div>
         <div class="muted pc-pos">${esc(POSITIONS[k.p.pos] || k.p.pos)} (${esc(k.p.pos)})</div>
-        <p>${esc(k.text)}</p></div>`).join("")}</div>
+        <p>${esc(k.text)}</p></a>`).join("")}</div>
     </section>` : ""}
     <section>
       <h2 class="display">Leikmannahópur</h2>
@@ -595,6 +597,106 @@ export function articlePage({ games, current, article, articles }) {
     </div></article>
     ${others.length ? `<section class="band band-tight"><div class="wrap">
       <h2 class="display">Fleiri greinar</h2>${articleCards(others)}</div></section>` : ""}`,
+  });
+}
+
+/* ---------- players ----------
+   Headshots are ESPN's transparent cut-outs, so they sit straight on the
+   team colour. The originals are ~230 KB PNGs; ESPN's own resizer serves
+   the same image at the size we draw it (7 KB for a roster thumbnail).
+   data.js only lets a.espncdn.com URLs through, so the path is ours to
+   rewrite. */
+export function shot(href, w) {
+  if (!href) return null;
+  const path = href.replace(/^https:\/\/a\.espncdn\.com/, "");
+  const h = Math.round(w * 254 / 350); // ESPN headshots are 350x254
+  return `https://a.espncdn.com/combiner/i?img=${encodeURIComponent(path)}&w=${w}&h=${h}&scale=crop&cquality=80&location=origin`;
+}
+
+export const playerHref = (ab, p) => `${BASE}/lid/${ab.toLowerCase()}/${p.id}${p.slug ? `-${p.slug}` : ""}`;
+
+// Roster name cell. rel="nofollow": ~1,700 profiles are for people, not
+// crawlers, and each uncached one costs an ESPN call.
+function playerCell(ab, p) {
+  if (!p.id) return esc(p.name);
+  const img = p.headshot
+    ? `<img class="thumb" src="${esc(shot(p.headshot, 96))}" alt="" width="48" height="35" loading="lazy" decoding="async">`
+    : `<span class="thumb thumb-empty" aria-hidden="true"></span>`;
+  return `<a class="pl-link" href="${esc(playerHref(ab, p))}" rel="nofollow">${img}<span>${esc(p.name)}</span></a>`;
+}
+
+export function playerPage({ ab, player: p, athlete, games, current, meta, keyText }) {
+  const t = TEAMS[ab], m = meta?.[ab] || {};
+  const color = m.color || "#0B1B3F";
+  const accent = m.alt && m.alt.toLowerCase() !== color.toLowerCase() ? m.alt : "#FFC629";
+  const posName = POSITIONS[p.pos] || p.pos;
+
+  const facts = [
+    p.age ? ["Aldur", `${p.age} ára`] : null,
+    p.heightIn ? ["Hæð", `${cm(p.heightIn)} cm`, feet(p.heightIn)] : null,
+    p.weightLb ? ["Þyngd", `${kg(p.weightLb)} kg`, `${p.weightLb} lbs`] : null,
+    athlete?.season ? ["Reynsla", experience(athlete.season)] : null,
+    p.college ? ["Háskóli", p.college] : null,
+    p.birthPlace?.length ? ["Fæddur í", p.birthPlace.join(", ")] : null,
+  ].filter(Boolean);
+
+  const stats = (athlete?.stats || [])
+    .map((s) => ({ ...s, label: statLabel(s.name, p.pos) }))
+    .filter((s) => s.label && s.value !== "");
+
+  let draft = "";
+  const d = athlete?.draft;
+  if (d) {
+    const by = d.team ? TEAMS[d.team].name : d.code;
+    // ESPN's pick number is overall, not within the round.
+    draft = `Valinn í ${d.round}. umferð nýliðavalsins ${d.year}, nr. ${d.pick} í heildina, af ${by}.`;
+  }
+
+  const next = games.find((g) => (g.home.ab === ab || g.away.ab === ab) && g.state === "pre" && new Date(g.date).getTime() > Date.now());
+
+  const body = `
+<section class="team-hero player-hero" style="--team:${esc(color)}; --team-accent:${esc(accent)}">
+  <span class="team-ghost" aria-hidden="true">${esc(p.jersey)}</span>
+  <div class="wrap player-hero-inner">
+    <div class="player-hero-text">
+      <nav class="crumbs" aria-label="Brauðmolar"><a href="${BASE}/lid">Lið</a>${ICON.chevron}<a href="${BASE}/lid/${ab.toLowerCase()}">${esc(t.name)}</a></nav>
+      <p class="player-kicker">${p.jersey ? `#${esc(p.jersey)} · ` : ""}${esc(posName)} (${esc(p.pos)})</p>
+      <h1 class="display-xl">${esc(p.name)}</h1>
+      <dl class="facts">${facts.map(([k, v, small]) =>
+        `<div><dt>${esc(k)}</dt><dd>${esc(v)}${small ? ` <small>${esc(small)}</small>` : ""}</dd></div>`).join("")}</dl>
+    </div>
+    ${p.headshot ? `<img class="player-shot" src="${esc(shot(p.headshot, 700))}" alt="${esc(p.name)}" width="700" height="508">` : ""}
+  </div>
+</section>
+<div class="wrap team-body">
+  <div class="team-main">
+    ${keyText ? `<section><h2 class="display">Um leikmanninn</h2><p class="lede">${esc(keyText)}</p></section>` : ""}
+    <section>
+      <h2 class="display">Tímabilið</h2>
+      ${stats.length
+        ? `<div class="stat-grid">${stats.map((s) => `<div class="card stat-card">
+            <span class="sc-value" style="color:${esc(color)}">${esc(statValue(s.name, s.value)[0])}${statValue(s.name, s.value)[1] ? `<small>${esc(statValue(s.name, s.value)[1])}</small>` : ""}</span>
+            <span class="sc-label">${esc(s.label)}</span>
+            ${s.rank ? `<span class="muted sc-rank">${esc(s.rank)}. sæti í deildinni</span>` : ""}
+          </div>`).join("")}</div>`
+        : athlete
+          ? '<p class="lede">Engar tölur skráðar fyrir þennan leikmann á tímabilinu enn.</p>'
+          : '<p class="lede">Tölfræðin náðist ekki í augnablikinu. Reyndu aftur eftir smá stund.</p>'}
+    </section>
+    ${draft ? `<section><h2 class="display">Nýliðavalið</h2><p class="lede">${esc(draft)}</p></section>` : ""}
+  </div>
+  <aside class="team-side">
+    ${next ? nextGameCard(next, { dark: true, meta }) : ""}
+    <a class="btn btn-red btn-lg" href="${BASE}/lid/${ab.toLowerCase()}">Allur hópur ${esc(t.name)}</a>
+  </aside>
+</div>`;
+
+  return layout({
+    title: `${p.name} | ${t.name} | NFL á íslensku`,
+    description: `${p.name}, ${posName.toLowerCase()} hjá ${t.name}: tölfræði, aldur, hæð og ferill, á íslensku.`,
+    active: "lid",
+    ticker: ticker(games, current),
+    body,
   });
 }
 

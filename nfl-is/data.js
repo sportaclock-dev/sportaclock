@@ -1,5 +1,5 @@
 import { espnTry } from "../espn.js";
-import { TEAMS } from "./content.js";
+import { TEAMS, teamKey } from "./content.js";
 /* ============================================================
    NFL á íslensku — live data.
 
@@ -228,15 +228,74 @@ export async function getRoster(ab) {
     const groups = {};
     for (const g of data.athletes || []) {
       groups[g.position] = (g.items || []).map((p) => ({
+        id: /^\d{1,12}$/.test(String(p.id)) ? String(p.id) : null,
+        slug: /^[a-z0-9-]{1,80}$/.test(p.slug || "") ? p.slug : "",
         name: p.displayName || p.fullName || "",
         jersey: p.jersey || "",
         pos: p.position?.abbreviation || "",
         age: p.age || null,
         college: p.college?.name || "",
+        heightIn: Number(p.height) || null,
+        weightLb: Number(p.weight) || null,
+        born: p.dateOfBirth || null,
+        birthPlace: [p.birthPlace?.city, p.birthPlace?.state, p.birthPlace?.country].filter(Boolean),
+        expYears: Number.isFinite(p.experience?.years) ? p.experience.years : null,
+        headshot: /^https:\/\/a\.espncdn\.com\//.test(p.headshot?.href || "") ? p.headshot.href : null,
       }));
     }
     const coach = data.coach?.[0];
     return { groups, coach: coach ? `${coach.firstName} ${coach.lastName}` : "" };
+  });
+}
+
+/* ---------- players ----------
+   Bio comes from the roster we already cache; this call adds only what
+   the roster lacks: the season's headline stats (with league rank) and
+   draft details. There are ~1,700 players, so a crawler walking every
+   profile could otherwise queue that many ESPN calls, and a refusal
+   streak trips the breaker golf and YNWA share. Hence a budget: past it,
+   profiles render from the roster alone and say the stats will follow. */
+const ATHLETE = "https://site.api.espn.com/apis/common/v3/sports/football/nfl/athletes";
+
+export function findInCachedRosters(id) {
+  for (const [key, entry] of store) {
+    if (!key.startsWith("roster:") || !entry.value) continue;
+    const player = Object.values(entry.value.groups || {}).flat().find((p) => p.id === id);
+    if (player) return { ab: key.slice("roster:".length), player };
+  }
+  return null;
+}
+const BUDGET_PER_MIN = 20;
+let budget = { minute: 0, used: 0 };
+
+export async function getAthlete(id) {
+  if (!/^\d{1,12}$/.test(String(id))) return null;
+  const hit = store.get(`athlete:${id}`);
+  const fresh = hit && hit.value !== undefined && Date.now() - hit.at < 6 * HOUR;
+  if (!fresh && !hit?.pending) {
+    const minute = Math.floor(Date.now() / MIN);
+    if (budget.minute !== minute) budget = { minute, used: 0 };
+    if (budget.used >= BUDGET_PER_MIN) return hit?.value ?? null;
+    budget.used++;
+  }
+  return cached(`athlete:${id}`, 6 * HOUR, async () => {
+    const a = (await espnJson(`${ATHLETE}/${id}`)).athlete;
+    if (!a) throw new Error("athlete: empty");
+    const d = /^(\d{4}): Rd (\d+), Pk (\d+) \(([A-Z]{2,3})\)$/.exec(a.displayDraft || "");
+    return {
+      team: ABBR_BY_ID[a.team?.id] || null,
+      // "10th Season" or "Rookie". The roster has experience.years too, but
+      // it disagreed with this by one for veterans, so this text wins.
+      season: /^rookie$/i.test(a.displayExperience || "") ? 1 : Number((/^(\d+)(?:st|nd|rd|th) season$/i.exec(a.displayExperience || "") || [])[1]) || null,
+      // Old codes like OAK or SD aren't current teams; keep them as text.
+      draft: d ? { year: d[1], round: Number(d[2]), pick: Number(d[3]), team: teamKey(d[4]), code: d[4] } : null,
+      statsTitle: a.statsSummary?.displayName || "",
+      stats: (a.statsSummary?.statistics || []).map((s) => ({
+        name: String(s.name || ""),
+        value: String(s.displayValue ?? ""),
+        rank: Number.isFinite(s.rank) ? s.rank : null,
+      })),
+    };
   });
 }
 

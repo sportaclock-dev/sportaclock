@@ -384,3 +384,37 @@ abbr { text-decoration: none; }
 .prose blockquote { border-left: 6px solid var(--gold); padding: 4px 0 4px 20px; color: var(--navy); }
 .prose code { font-size: 0.9em; background: var(--pale); padding: 1px 6px; }
 .prose hr { border: 0; border-top: 3px solid var(--line); margin: 2em 0; }
+
+/* ---------- players ---------- */
+.pl-link { display: inline-flex; align-items: center; gap: 12px; color: var(--navy); text-decoration: none; }
+.pl-link:hover span { color: var(--red); text-decoration: underline; }
+.thumb { width: 48px; height: 35px; flex-shrink: 0; object-fit: cover; object-position: top; background: var(--pale); border-radius: 2px; }
+.thumb-empty { display: inline-block; }
+td .pl-link { min-height: 36px; }
+
+a.player-card { color: var(--navy); text-decoration: none; position: relative; }
+a.player-card:hover { box-shadow: 6px 6px 0 var(--red); }
+.pc-shot { position: absolute; right: 12px; top: 12px; width: 140px; height: auto; }
+
+.player-hero { padding-bottom: 0; }
+.player-hero-inner { position: relative; display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; }
+.player-hero-text { display: flex; flex-direction: column; gap: 14px; padding-bottom: 48px; min-width: 0; }
+.player-kicker { margin: 0; font-weight: 700; font-size: 18px; letter-spacing: 0.02em; }
+.player-hero .display-xl { font-size: clamp(48px, 7.4vw, 108px); text-shadow: 0 2px 0 rgba(0,0,0,0.25); }
+.player-shot { width: min(46%, 560px); height: auto; flex-shrink: 0; filter: drop-shadow(0 6px 18px rgba(0,0,0,0.35)); }
+.facts small { font-family: var(--text); font-size: 15px; font-weight: 600; opacity: 0.85; }
+.team-side > .btn { align-self: flex-start; }
+
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 20px; }
+.stat-card { padding: 18px 20px; display: flex; flex-direction: column; gap: 4px; }
+.sc-value { font-family: var(--display); font-weight: 900; font-size: 64px; line-height: 0.9; font-variant-numeric: tabular-nums; }
+.sc-label { font-family: var(--display); font-weight: 800; font-size: 24px; line-height: 1.05; }
+.sc-rank { font-size: 14px; font-weight: 700; }
+
+@media (max-width: 800px) {
+  .player-hero-inner { flex-direction: column-reverse; align-items: flex-start; }
+  .player-shot { width: min(80%, 360px); align-self: center; }
+  .player-hero-text { padding-bottom: 40px; }
+  .pc-shot { width: 96px; }
+}
+.sc-value small { font-size: 0.42em; margin-left: 4px; }
