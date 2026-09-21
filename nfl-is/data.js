@@ -184,6 +184,9 @@ export async function getGames() {
 /* ---------- teams ---------- */
 const hex = (s) => (/^[0-9a-f]{6}$/i.test(String(s || "")) ? `#${s}` : null);
 
+const pickLogo = (logos, rel) =>
+  (logos || []).find((l) => Array.isArray(l.rel) && l.rel.length === rel.length && rel.every((r) => l.rel.includes(r)))?.href || null;
+
 export async function getTeamsMeta() {
   return cached("teams", 24 * HOUR, async () => {
     const data = await espnJson(`${SITE}/teams`);
@@ -194,7 +197,10 @@ export async function getTeamsMeta() {
       out[ab] = {
         color: hex(team.color),
         alt: hex(team.alternateColor),
-        logo: team.logos?.[0]?.href || null,
+        // "default" for light backgrounds, "dark" for navy ones: the
+        // Raiders' and Saints' marks vanish on dark blue otherwise.
+        logo: pickLogo(team.logos, ["full", "default"]) || team.logos?.[0]?.href || null,
+        logoDark: pickLogo(team.logos, ["full", "dark"]),
         location: team.location || "",
         nickname: team.name || "",
       };

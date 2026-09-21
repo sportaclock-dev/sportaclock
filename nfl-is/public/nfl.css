@@ -117,6 +117,7 @@ button { font-family: inherit; }
 .next-teams { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .next-teams a { display: flex; flex-direction: column; text-decoration: none; color: inherit; min-width: 0; }
 .next-teams a.right { align-items: flex-end; text-align: right; }
+.next-teams .logo { width: 48px; height: 48px; margin-bottom: 6px; }
 .next-teams .muted { font-size: 15px; font-weight: 600; }
 .big-ab { font-family: var(--display); font-weight: 900; font-size: 58px; line-height: 0.9; }
 .at { font-family: var(--display); font-weight: 800; font-size: 40px; color: var(--red); }
@@ -219,9 +220,9 @@ button { font-family: inherit; }
 .games { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 520px), 1fr)); gap: 16px; }
 .game { display: flex; background: var(--white); color: var(--navy); min-height: 104px; }
 .gr-teams { flex-grow: 1; min-width: 0; padding: 14px 20px; display: flex; flex-direction: column; justify-content: center; gap: 8px; }
-.gr-team { display: flex; align-items: baseline; gap: 12px; }
+.gr-team { display: flex; align-items: center; gap: 12px; }
 .gr-team.lost { opacity: 0.55; }
-.gr-ab { width: 58px; flex-shrink: 0; font-family: var(--display); font-weight: 900; font-size: 28px; line-height: 1; color: var(--navy); text-decoration: none; }
+.gr-ab { width: 96px; flex-shrink: 0; display: inline-flex; align-items: center; gap: 8px; font-family: var(--display); font-weight: 900; font-size: 28px; line-height: 1; color: var(--navy); text-decoration: none; }
 .gr-ab:hover { color: var(--red); }
 .gr-name { flex-grow: 1; min-width: 0; font-size: 17px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .gr-score { font-family: var(--display); font-weight: 900; font-size: 34px; line-height: 1; font-variant-numeric: tabular-nums; }
@@ -295,7 +296,7 @@ abbr { text-decoration: none; }
 .tg { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: var(--white); padding: 12px 16px; min-height: 76px; }
 .tg > div:first-child { display: flex; flex-direction: column; }
 .tg .muted { font-size: 14px; font-weight: 600; }
-.tg-opp { font-family: var(--display); font-weight: 900; font-size: 30px; line-height: 1.05; color: var(--navy); text-decoration: none; }
+.tg-opp { display: inline-flex; align-items: center; gap: 10px; white-space: nowrap; font-family: var(--display); font-weight: 900; font-size: 30px; line-height: 1.05; color: var(--navy); text-decoration: none; }
 .tg-opp:hover { color: var(--red); }
 .tg-right { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
 .tg-score { font-family: var(--display); font-weight: 900; font-size: 28px; font-variant-numeric: tabular-nums; }

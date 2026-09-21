@@ -15,7 +15,7 @@ import { videoFor, searchUrl } from "./data.js";
    ============================================================ */
 
 export const BASE = "/nfl";
-const V = "3"; // bump to bust the CSS/JS cache
+const V = "4"; // bump to bust the CSS/JS cache
 
 export function esc(s) {
   return String(s ?? "")
@@ -38,8 +38,8 @@ const ICON = {
   clock: '<svg width="72" height="72" viewBox="0 0 24 24" fill="none" stroke="#FFC629" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
 };
 
-function logo(meta, ab, size = 28) {
-  const src = meta?.[ab]?.logo;
+function logo(meta, ab, size = 28, { dark = false } = {}) {
+  const src = (dark && meta?.[ab]?.logoDark) || meta?.[ab]?.logo;
   if (!src) return "";
   return `<img class="logo" src="${esc(src)}" alt="" width="${size}" height="${size}" loading="lazy" decoding="async">`;
 }
@@ -108,7 +108,7 @@ function countdownBoxes(iso) {
 </div>`;
 }
 
-function nextGameCard(g, { dark = false } = {}) {
+function nextGameCard(g, { dark = false, meta } = {}) {
   if (!g) return "";
   const vs = g.neutral ? "gegn" : "@";
   return `<div class="card next${dark ? " next-dark" : ""}">
@@ -117,9 +117,9 @@ function nextGameCard(g, { dark = false } = {}) {
     <span class="muted">${esc(weekLabel(g.type, g.week))}</span>
   </div>
   <div class="next-teams">
-    <a href="${teamHref(g.away.ab)}"><span class="big-ab">${esc(g.away.ab)}</span><span class="muted">${esc(TEAMS[g.away.ab].name)}</span></a>
+    <a href="${teamHref(g.away.ab)}">${logo(meta, g.away.ab, 48, { dark })}<span class="big-ab">${esc(g.away.ab)}</span><span class="muted">${esc(TEAMS[g.away.ab].name)}</span></a>
     <span class="at">${vs}</span>
-    <a class="right" href="${teamHref(g.home.ab)}"><span class="big-ab">${esc(g.home.ab)}</span><span class="muted">${esc(TEAMS[g.home.ab].name)}</span></a>
+    <a class="right" href="${teamHref(g.home.ab)}">${logo(meta, g.home.ab, 48, { dark })}<span class="big-ab">${esc(g.home.ab)}</span><span class="muted">${esc(TEAMS[g.home.ab].name)}</span></a>
   </div>
   <p class="when">${esc(longWhen(g.date))}</p>
   ${countdownBoxes(g.date)}
@@ -127,11 +127,11 @@ function nextGameCard(g, { dark = false } = {}) {
 }
 
 /* ---------- games ---------- */
-function gameRow(g, playingId) {
+function gameRow(g, playingId, meta) {
   const vid = videoFor(g);
   const side = (s, won) =>
     `<div class="gr-team${g.state === "post" && !won ? " lost" : ""}">
-      <a class="gr-ab" href="${teamHref(s.ab)}">${esc(s.ab)}</a>
+      <a class="gr-ab" href="${teamHref(s.ab)}">${logo(meta, s.ab, 28)}${esc(s.ab)}</a>
       <span class="gr-name">${esc(TEAMS[s.ab].name)}</span>
       <span class="gr-score" data-score="${s === g.home ? "h" : "a"}">${s.score == null ? "" : esc(s.score)}</span>
     </div>`;
@@ -175,7 +175,7 @@ function player(featured) {
   </div>`;
 }
 
-export function gamesSection({ games, current, type, week, heading = "Leikir og highlights", h = "h2" }) {
+export function gamesSection({ games, current, meta, type, week, heading = "Leikir og highlights", h = "h2" }) {
   const list = games.filter((g) => g.type === type && g.week === week);
   const withVideo = list.filter((g) => videoFor(g)).map((g) => ({ g, vid: videoFor(g) }));
   const featured = withVideo[withVideo.length - 1] || null;
@@ -208,7 +208,7 @@ export function gamesSection({ games, current, type, week, heading = "Leikir og 
     </div>
     <nav class="weeks" aria-label="Vikur">${tabs}</nav>
     ${list.length
-      ? `<ul class="games" data-week="${esc(weekKey(type, week))}"${live ? " data-live" : ""}>${list.map((g) => gameRow(g, featured?.vid)).join("")}</ul>`
+      ? `<ul class="games" data-week="${esc(weekKey(type, week))}"${live ? " data-live" : ""}>${list.map((g) => gameRow(g, featured?.vid, meta)).join("")}</ul>`
       : `<p class="muted-dark">Engir leikir skráðir í þessari viku enn.</p>`}
   </div>
 </section>`;
@@ -363,11 +363,11 @@ export function frontPage({ games, current, meta, standings }) {
         <a class="btn btn-ghost btn-lg" href="#leikir">Leikir vikunnar</a>
       </div>
     </div>
-    ${nextGameCard(next)}
+    ${nextGameCard(next, { meta })}
   </div>
 </section>
 ${explainer()}
-${gamesSection({ games, current, type: wk.type, week: wk.week })}
+${gamesSection({ games, current, meta, type: wk.type, week: wk.week })}
 ${teamsSection(meta, standings)}`;
 
   return layout({
@@ -378,13 +378,13 @@ ${teamsSection(meta, standings)}`;
   });
 }
 
-export function gamesPage({ games, current, type, week }) {
+export function gamesPage({ games, current, meta, type, week }) {
   return layout({
     title: `${weekLabel(type, week)} | NFL á íslensku`,
     description: `Allir leikir í ${weekLabel(type, week).toLowerCase()} í NFL, úrslit og highlights, að íslenskum tíma.`,
     active: "leikir",
     ticker: ticker(games, current),
-    body: gamesSection({ games, current, type, week, heading: weekLabel(type, week), h: "h1" }),
+    body: gamesSection({ games, current, meta, type, week, heading: weekLabel(type, week), h: "h1" }),
   });
 }
 
@@ -464,7 +464,7 @@ export function teamPage({ ab, games, current, meta, standings, detail, roster }
       right = `<span class="tg-when">${esc(shortWhen(g.date))}</span>`;
     }
     return `<li class="tg"><div><span class="muted">${esc(weekLabel(g.type, g.week))}</span>
-      <a class="tg-opp" href="${teamHref(them.ab)}">${esc(opp)}</a></div><div class="tg-right">${right}</div></li>`;
+      <a class="tg-opp" href="${teamHref(them.ab)}">${logo(meta, them.ab, 30)}<span>${esc(opp)}</span></a></div><div class="tg-right">${right}</div></li>`;
   };
 
   const rosterTables = ROSTER_GROUPS.map(([key, label]) => {
@@ -519,7 +519,7 @@ export function teamPage({ ab, games, current, meta, standings, detail, roster }
     </section>
   </div>
   <aside class="team-side">
-    ${next ? nextGameCard(next, { dark: true }) : ""}
+    ${next ? nextGameCard(next, { dark: true, meta }) : ""}
     <section>
       <h2 class="display">Leikir</h2>
       <ul class="team-games">${mine.map(teamGame).join("") || '<li class="muted">Engir leikir fundust.</li>'}</ul>
