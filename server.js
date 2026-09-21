@@ -7,6 +7,7 @@ import { ynwaApi, ynwaPage, ynwaProbe, ynwaArchivePage } from "./ynwa.js";
 import { commentsGet, commentsPost, commentsDelete } from "./comments.js";
 import { archiveList, archiveOne, archiveCreate, archiveSearch } from "./archive.js";
 import { espnTry } from "./espn.js";
+import { mountNflIs } from "./nfl-is/index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -467,6 +468,10 @@ app.post("/api/ynwa/archive", archiveCreate);
 app.get("/api/ynwa/archive/search", archiveSearch);
 app.get("/ynwa", ynwaPage);
 app.get("/ynwa/leikir", ynwaArchivePage);
+
+// NFL á íslensku — a separate product staged at /nfl. It SHOWS scores,
+// so it has its own data path and never feeds the spoiler-free /api routes.
+mountNflIs(app);
 
 // Serve the built frontend
 app.use(express.static(path.join(__dirname, "dist")));
