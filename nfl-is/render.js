@@ -16,7 +16,7 @@ import { videoFor, searchUrl } from "./data.js";
    ============================================================ */
 
 export const BASE = "/nfl";
-const V = "7"; // bump to bust the CSS/JS cache
+const V = "8"; // bump to bust the CSS/JS cache
 
 export function esc(s) {
   return String(s ?? "")
@@ -129,7 +129,7 @@ function nextGameCard(g, { dark = false, meta } = {}) {
 }
 
 /* ---------- games ---------- */
-function gameRow(g, playingId, meta) {
+function gameRow(g, meta) {
   const vid = videoFor(g);
   const side = (s, won) =>
     `<div class="gr-team${g.state === "post" && !won ? " lost" : ""}">
@@ -145,7 +145,7 @@ function gameRow(g, playingId, meta) {
       <span class="gr-meta" data-detail>${esc(g.detail)}</span>`;
   } else if (g.state === "post") {
     status = vid
-      ? `<button type="button" class="btn btn-red btn-sm" data-video="${esc(vid)}" data-title="${esc(`${TEAMS[g.away.ab].name} @ ${TEAMS[g.home.ab].name}`)}"${vid === playingId ? ' aria-pressed="true"' : ' aria-pressed="false"'}>${ICON.play}Highlights</button>`
+      ? `<a class="btn btn-red btn-sm" href="https://www.youtube.com/watch?v=${esc(vid)}" target="_blank" rel="noopener">${ICON.play}Highlights</a>`
       : `<a class="btn btn-red btn-sm" href="${esc(searchUrl(g))}" target="_blank" rel="noopener">${ICON.play}Highlights</a>`;
     status += `<span class="gr-meta">Lokið · ${esc(shortWhen(g.date))}</span>`;
   } else {
@@ -164,15 +164,15 @@ function player(featured) {
   }
   const { g, vid } = featured;
   const title = `${TEAMS[g.away.ab].name} @ ${TEAMS[g.home.ab].name}`;
-  // A thumbnail that becomes the real player on click: no YouTube
-  // iframe (or its cookies) until someone actually wants the video.
-  // Without JavaScript it's a plain link to YouTube.
-  return `<div class="player" data-player>
-    <a class="player-facade" href="https://www.youtube.com/watch?v=${esc(vid)}" target="_blank" rel="noopener" data-video="${esc(vid)}" data-title="${esc(title)}">
+  // A link to YouTube with the thumbnail, not an embedded player: NFL
+  // blocks its videos from playing on other sites ("Video unavailable").
+  // On phones the link opens the YouTube app, which is better anyway.
+  return `<div class="player">
+    <a class="player-facade" href="https://www.youtube.com/watch?v=${esc(vid)}" target="_blank" rel="noopener" aria-label="${esc(`Horfa á highlights á YouTube: ${title}`)}">
       <img src="https://i.ytimg.com/vi/${esc(vid)}/hqdefault.jpg" alt="" loading="lazy">
       <span class="tag tag-gold player-tag">Highlights</span>
       <span class="play-circle">${ICON.bigPlay}</span>
-      <span class="player-caption"><span data-player-title>${esc(title)}</span><span class="gold">${esc(g.away.score)}–${esc(g.home.score)}</span></span>
+      <span class="player-caption"><span>${esc(title)}</span><span class="gold">${esc(g.away.score)}–${esc(g.home.score)}</span></span>
     </a>
   </div>`;
 }
@@ -196,21 +196,22 @@ export function gamesSection({ games, current, meta, type, week, heading = "Leik
   return `<section id="leikir" class="band band-dark">
   <div class="wrap">
     <${h} class="display">${esc(heading)}</${h}>
-    <p class="lede-dark">Allir tímar eru að íslenskum tíma. Smelltu á Highlights á leik til að spila hann hér.</p>
+    <p class="lede-dark">Allir tímar eru að íslenskum tíma. Highlights opnast á YouTube.</p>
     <div class="feature">
       ${player(featured)}
       <div class="feature-side">
         ${featured
-          ? `<span class="tag tag-red">Spilar núna</span>
-             <p class="feature-title" data-player-title>${esc(`${TEAMS[featured.g.away.ab].name} @ ${TEAMS[featured.g.home.ab].name}`)}</p>
-             <p class="muted-dark">Veldu annan leik hér fyrir neðan til að skipta um myndband.</p>`
+          ? `<span class="tag tag-red">Nýjustu highlights</span>
+             <p class="feature-title">${esc(`${TEAMS[featured.g.away.ab].name} @ ${TEAMS[featured.g.home.ab].name}`)}</p>
+             <a class="btn btn-gold btn-lg" href="https://www.youtube.com/watch?v=${esc(featured.vid)}" target="_blank" rel="noopener">${ICON.play}Horfa á YouTube</a>
+             <p class="muted-dark">NFL leyfir ekki að myndböndin séu spiluð á öðrum síðum, svo þau opnast á YouTube.</p>`
           : `<span class="tag tag-gold">Fram undan</span>
              <p class="muted-dark">Veldu viku sem er búin til að sjá leiki sem þegar hafa verið spilaðir.</p>`}
       </div>
     </div>
     <nav class="weeks" aria-label="Vikur">${tabs}</nav>
     ${list.length
-      ? `<ul class="games" data-week="${esc(weekKey(type, week))}"${live ? " data-live" : ""}>${list.map((g) => gameRow(g, featured?.vid, meta)).join("")}</ul>`
+      ? `<ul class="games" data-week="${esc(weekKey(type, week))}"${live ? " data-live" : ""}>${list.map((g) => gameRow(g, meta)).join("")}</ul>`
       : `<p class="muted-dark">Engir leikir skráðir í þessari viku enn.</p>`}
   </div>
 </section>`;

@@ -1,7 +1,7 @@
 /* NFL á íslensku — the little bit of JavaScript.
    The server renders everything; this only adds the ticking clock,
-   the tabbed explainer, the in-page highlights player and live score
-   refresh. Every node is built with createElement/textContent. */
+   the tabbed explainer and live score refresh. Highlights are plain
+   links: NFL blocks its videos from playing embedded on other sites. Every node is built with createElement/textContent. */
 (function () {
   "use strict";
   document.documentElement.classList.remove("no-js");
@@ -46,33 +46,6 @@
       });
     });
   }
-
-  /* ---------- highlights player ---------- */
-  var player = document.querySelector("[data-player]");
-  function play(id, title) {
-    if (!player || !/^[\w-]{6,20}$/.test(id)) return false;
-    var frame = document.createElement("iframe");
-    frame.src = "https://www.youtube-nocookie.com/embed/" + id + "?autoplay=1&rel=0";
-    frame.title = "Highlights: " + title;
-    frame.allow = "autoplay; encrypted-media; picture-in-picture; fullscreen";
-    frame.allowFullscreen = true;
-    frame.referrerPolicy = "strict-origin-when-cross-origin";
-    while (player.firstChild) player.removeChild(player.firstChild);
-    player.appendChild(frame);
-    [].forEach.call(document.querySelectorAll(".feature-side [data-player-title]"), function (n) { n.textContent = title; });
-    [].forEach.call(document.querySelectorAll("button[data-video]"), function (b) {
-      b.setAttribute("aria-pressed", b.getAttribute("data-video") === id ? "true" : "false");
-    });
-    return true;
-  }
-  document.addEventListener("click", function (e) {
-    var el = e.target.closest ? e.target.closest("[data-video]") : null;
-    if (!el) return;
-    if (play(el.getAttribute("data-video"), el.getAttribute("data-title") || "")) {
-      e.preventDefault();
-      if (el.tagName === "BUTTON") player.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
-  });
 
   /* ---------- live scores ----------
      Only when this week has a game in progress. Scores update in place;
