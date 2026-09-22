@@ -4,7 +4,7 @@ import { fileURLToPath } from "url";
 import { teamKey, parseWeekKey, weekKey, KEY_PLAYERS } from "./content.js";
 import {
   getGames, getTeamsMeta, getStandings, getTeamDetail, getRoster, getAthlete, findInCachedRosters,
-  pollHighlights, cacheStatus,
+  highlightsReady, startHighlightPoller, highlightStatus, cacheStatus,
 } from "./data.js";
 import {
   BASE, frontPage, gamesPage, teamsPage, teamPage, glossaryPage, errorPage,
@@ -30,17 +30,15 @@ import { getArticles, getArticle } from "./articles.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
-// Highlights are polled on the back of page views, never on a timer:
-// no visitors, no requests. The first view after a quiet spell waits
-// for the poll so it can show videos; later ones don't.
-async function freshHighlights() {
-  const p = pollHighlights().catch(() => null);
-  await Promise.race([p, new Promise((r) => setTimeout(r, 1500))]);
+// Highlights are polled on a timer (data.js). The first pages after a
+// deploy wait briefly for the saved videos to load back from Redis.
+async function savedHighlights() {
+  await Promise.race([highlightsReady(), new Promise((r) => setTimeout(r, 1500))]);
 }
 
 async function common() {
   const [{ games, current }, meta, standings] = await Promise.all([
-    getGames(), getTeamsMeta(), getStandings(), freshHighlights(),
+    getGames(), getTeamsMeta(), getStandings(), savedHighlights(),
   ]);
   return { games: games || [], current, meta, standings };
 }
@@ -60,6 +58,7 @@ const wrap = (fn) => async (req, res) => {
 };
 
 export function mountNflIs(app) {
+  startHighlightPoller();
   app.use(`${BASE}/static`, express.static(path.join(here, "public"), { maxAge: "1h" }));
 
   app.get(BASE, wrap(async (req, res) => {
@@ -166,5 +165,5 @@ export function mountNflIs(app) {
     });
   }));
 
-  app.get(`${BASE}/api/status`, (req, res) => res.json({ caches: cacheStatus() }));
+  app.get(`${BASE}/api/status`, (req, res) => res.json({ highlights: highlightStatus(), caches: cacheStatus() }));
 }

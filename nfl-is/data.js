@@ -1,5 +1,12 @@
 import { espnTry } from "../espn.js";
 import { TEAMS, teamKey } from "./content.js";
+import { loadHighlights, saveHighlight, storeEnabled } from "./store.js";
+import { readFileSync } from "node:fs";
+
+const SEED = (() => {
+  try { return JSON.parse(readFileSync(new URL("./seed-highlights.json", import.meta.url), "utf8")); }
+  catch { return {}; }
+})();
 /* ============================================================
    NFL á íslensku — live data.
 
@@ -363,27 +370,95 @@ export function parseFeed(xml) {
   return out;
 }
 
+// Returns the videos that were new, so the caller can persist just those.
 export function rememberVideos(entries) {
+  const added = [];
   for (const e of entries) {
     const p = parseHighlightTitle(e.title);
     if (!p) continue;
-    const key = pairKey(p.a, p.b);
-    const list = seenVideos.get(key) || [];
-    if (!list.some((x) => x.videoId === e.videoId)) {
-      list.push({ videoId: e.videoId, week: p.week, published: e.published });
-      seenVideos.set(key, list);
+    if (addVideo(e.videoId, { a: p.a, b: p.b, week: p.week, published: e.published })) {
+      added.push({ videoId: e.videoId, entry: { a: p.a, b: p.b, week: p.week, published: e.published } });
     }
   }
+  return added;
+}
+
+function addVideo(videoId, { a, b, week, published }) {
+  if (!TEAMS[a] || !TEAMS[b]) return false;
+  const key = pairKey(a, b);
+  const list = seenVideos.get(key) || [];
+  if (list.some((x) => x.videoId === videoId)) return false;
+  list.push({ videoId, week: week ?? null, published: published || null });
+  seenVideos.set(key, list);
+  return true;
+}
+
+/* Polled on a timer, not on page views: the feed holds only the latest
+   15 uploads and the channel posts dozens on a Sunday, so waiting for a
+   visitor let games scroll out unseen. Every 5 minutes is far faster
+   than the channel can post 15 videos. These calls go to YouTube, not
+   ESPN, so the shared breaker is not involved. */
+const POLL_MS = 5 * MIN;
+const hl = { ready: null, lastPollAt: null, lastError: null, saved: 0 };
+
+export function highlightsReady() {
+  if (!hl.ready) {
+    hl.ready = loadHighlights()
+      .then(async (saved) => {
+        for (const [videoId, entry] of Object.entries(saved)) addVideo(videoId, entry);
+        hl.saved = Object.keys(saved).length;
+        if (storeEnabled()) console.log(`[nfl-is] restored ${hl.saved} highlight videos`);
+        // Weeks 1-2 of 2026 were matched before this store existed and lost
+        // on redeploys; they were recovered from NFL's week playlists into
+        // seed-highlights.json. Anything there not yet stored is added once.
+        for (const [videoId, entry] of Object.entries(SEED)) {
+          if (saved[videoId]) continue;
+          addVideo(videoId, entry);
+          await saveHighlight(videoId, entry).catch(() => {});
+        }
+      })
+      .catch((err) => {
+        hl.lastError = `restore: ${err.message}`;
+        console.error(`[nfl-is] highlights ${hl.lastError}`);
+      });
+  }
+  return hl.ready;
 }
 
 export async function pollHighlights() {
-  return cached("youtube", 10 * MIN, async () => {
+  return cached("youtube", POLL_MS - 30 * 1000, async () => {
+    await highlightsReady();
     const r = await fetch(YT_FEED);
     if (!r.ok) throw new Error(`YouTube ${r.status}`);
-    const entries = parseFeed(await r.text());
-    rememberVideos(entries);
-    return entries.length;
+    const added = rememberVideos(parseFeed(await r.text()));
+    hl.lastPollAt = new Date().toISOString();
+    for (const { videoId, entry } of added) {
+      // One failed write shouldn't stop the rest, or the poll.
+      await saveHighlight(videoId, entry).catch((err) => {
+        hl.lastError = `save: ${err.message}`;
+        console.error(`[nfl-is] highlights ${hl.lastError}`);
+      });
+    }
+    return added.length;
   });
+}
+
+let timer = null;
+export function startHighlightPoller() {
+  if (timer) return;
+  pollHighlights().catch(() => {});
+  timer = setInterval(() => pollHighlights().catch(() => {}), POLL_MS);
+  timer.unref?.(); // never keep the process alive on its own
+}
+
+export function highlightStatus() {
+  return {
+    videos: [...seenVideos.values()].reduce((n, l) => n + l.length, 0),
+    persisted: storeEnabled(),
+    restoredAtBoot: hl.saved,
+    lastPollAt: hl.lastPollAt,
+    lastError: hl.lastError,
+  };
 }
 
 // A game's own video: same two teams, and either the same week number in
@@ -410,4 +485,5 @@ export function searchUrl(game) {
 export function _resetForTests() {
   store.clear();
   seenVideos.clear();
+  hl.ready = null; hl.saved = 0; hl.lastPollAt = null; hl.lastError = null;
 }
