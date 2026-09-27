@@ -429,10 +429,49 @@ function spokenCountdown(ms) {
 
 /* ---------- components ---------- */
 
-function EventName({ ev, className = "ev-name" }) {
+/* Line icons instead of emoji. Emoji look different on every platform
+   (Windows drew the F1 car as a flat shoe) and ignore the theme; these
+   take the text colour. */
+const ICONS = {
+  football: <><circle cx="12" cy="12" r="9" /><path d="M12 7.6l3.7 2.7-1.4 4.4H9.7l-1.4-4.4z" /><path d="M12 3v4.6M15.7 10.3l4.4-1.4M14.3 14.7l2.7 3.7M9.7 14.7L7 18.4M8.3 10.3L3.9 8.9" /></>,
+  f1: <><path d="M5 21V3.5" /><path d="M5 4h14v9H5" /><path d="M5 8.5h14M9.7 4v9M14.3 4v9" /></>,
+  nfl: <><path d="M4.4 19.6C3.6 14.8 5.4 9.6 9.3 6.2 13.1 3 17.9 2.6 19.6 4.4c1.8 1.7 1.4 6.5-1.8 10.3-3.4 3.9-8.6 5.7-13.4 4.9z" /><path d="M9 15l6-6M10.4 10.6l3 3M11.9 9.1l1.5 1.5M8.9 12.1l1.5 1.5" /></>,
+  golf: <><path d="M9 20V3.5l8.5 4L9 11.5" /><ellipse cx="9" cy="20.2" rx="5.5" ry="1.3" /></>,
+  shield: <path d="M12 3l7 2.8v5.4c0 4.6-3 8.3-7 9.8-4-1.5-7-5.2-7-9.8V5.8z" />,
+  moon: <path d="M19.5 14.6A7.8 7.8 0 1 1 9.4 4.5a6.2 6.2 0 0 0 10.1 10.1z" />,
+  warn: <><path d="M12 4l9 16H3z" /><path d="M12 10v4.5M12 17.3v.1" /></>,
+  clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3.2 2" /></>,
+};
+function Icon({ name, size = 16 }) {
+  return (
+    <svg className="ic" width={size} height={size} viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"
+      strokeLinejoin="round" aria-hidden="true">
+      {ICONS[name]}
+    </svg>
+  );
+}
+
+// A club crest beside its name. Decorative: the name is right there.
+function Crest({ src, size = 18 }) {
+  if (!src) return null;
+  return <img className="crest-ic" src={src} alt="" width={size} height={size}
+    loading="lazy" decoding="async" />;
+}
+
+function EventName({ ev, className = "ev-name", crests = 0 }) {
   const sep = <span className="ev-vs">vs</span>;
   if (ev.home) {
-    return <span className={className}>{ev.home} {sep} {ev.away}</span>;
+    if (!crests || (!ev.homeCrest && !ev.awayCrest)) {
+      return <span className={className}>{ev.home} {sep} {ev.away}</span>;
+    }
+    return (
+      <span className={className}>
+        <span className="team"><Crest src={ev.homeCrest} size={crests} />{ev.home}</span>
+        {" "}{sep}{" "}
+        <span className="team"><Crest src={ev.awayCrest} size={crests} />{ev.away}</span>
+      </span>
+    );
   }
   const [a, b] = String(ev.title || "").split(" vs ");
   return <span className={className}>{a}{b && <> {sep} {b}</>}</span>;
@@ -494,8 +533,26 @@ function Elapsed({ from }) {
 }
 
 function StagePill({ ev }) {
-  if (!ev.tag) return null;
+  // "Regular season" on all 272 NFL games says nothing.
+  if (!ev.tag || ev.tag === "Regular season") return null;
+  // Nor does "Practice 1" on a row already titled "Singapore GP — Practice 1".
+  if (ev.title && ev.title.toLowerCase().includes(ev.tag.toLowerCase())) return null;
   return <span className="pill">{ev.tag}</span>;
+}
+
+/* The hero's matchup: two big crests when we have them, the plain name
+   otherwise (F1 sessions, golf, a crestless league). */
+function HeroName({ ev }) {
+  if (!ev.home || (!ev.homeCrest && !ev.awayCrest)) {
+    return <h2 className="hero-name"><EventName ev={ev} className="hero-ev" /></h2>;
+  }
+  return (
+    <h2 className="hero-name hero-teams">
+      <span className="hero-team"><Crest src={ev.homeCrest} size={56} /><span>{ev.home}</span></span>
+      <span className="hero-vs">vs</span>
+      <span className="hero-team"><Crest src={ev.awayCrest} size={56} /><span>{ev.away}</span></span>
+    </h2>
+  );
 }
 
 /* A clickable departure-board row — used for the golf drill-down.
@@ -543,9 +600,9 @@ const EventRow = React.memo(function EventRow({ ev, clockLabel, off }) {
         <div className="row-meta">
           {ev.rank && <span className="rank" title={`World number ${ev.rank}`}>#{ev.rank}</span>}
           <StagePill ev={ev} />
-          {owl && <span className="owl">🌙 night owl</span>}
+          {owl && <span className="owl"><Icon name="moon" size={11} /> night owl</span>}
         </div>
-        <EventName ev={ev} />
+        <EventName ev={ev} crests={18} />
         {(ev.venue || ev.city) && (
           <div className="row-where">
             {[ev.venue, ev.city].filter(Boolean).join(" · ")}
@@ -905,6 +962,24 @@ export default function App() {
     return () => clearTimeout(id);
   }, [events, boundary]);
 
+  /* What's next in each sport, shown on its tab. The same candidates the
+     auto-jump weighs, so a tab's countdown and where the page opened can
+     never disagree. A live event wins its tab. */
+  const nextBySport = useMemo(() => {
+    const out = {};
+    for (const [s, l] of ALL_VIEWS) {
+      for (const ev of landingCandidates(s, l, football, nflApi, golfApi, golfWatchlist)) {
+        const kind = classify(ev, boundary);
+        const cur = out[s];
+        if (kind === "live") { out[s] = { live: true, ev }; continue; }
+        if (kind === "upcoming" && !cur?.live && (!cur || ev.kickoff < cur.ev.kickoff)) {
+          out[s] = { live: false, ev };
+        }
+      }
+    }
+    return out;
+  }, [football, nflApi, golfApi, golfWatchlist, boundary]);
+
   /* One entry per published round: when the first and last groups go out, and
      how many are in it. Deliberately NOT scope-filtered — the overview should
      describe the actual tee sheet, not your watchlist. */
@@ -1048,18 +1123,16 @@ export default function App() {
 
         {/* ---------- header ---------- */}
         <header className="head">
-          <p className="eyebrow"><span className="mark" aria-hidden="true" />{eyebrow}</p>
-          <h1 className="logo">SPORTACLOCK</h1>
-          <p className="tagline">
-            <span>Ready.</span> <span className="t-tick">Tick.</span> <span className="t-kick">Kick.</span>
-          </p>
-          <p className="lede">
-            Every start counted down in your time, plus a spoiler-free catch-up
-            for the ones you slept through.
-          </p>
+          <div className="brand">
+            <h1 className="logo">SPORTACLOCK</h1>
+            <p className="tagline">
+              <span>Ready.</span> <span className="t-tick">Tick.</span> <span className="t-kick">Kick.</span>
+            </p>
+          </div>
           <p className="tzline">
-            Times shown in {tz}
-            {feedLive && <span className="feed"> · live schedule</span>}
+            <Icon name="clock" size={13} />
+            {tz}
+            {feedLive && <span className="feed"> · live</span>}
           </p>
         </header>
 
@@ -1073,7 +1146,12 @@ export default function App() {
                 aria-pressed={sport === id}
                 onClick={() => switchSport(id)}
               >
-                <span aria-hidden="true">{s.icon}</span> {s.label}
+                <span className="sport-top"><Icon name={id} size={17} /> {s.label}</span>
+                <span className="sport-next">
+                  {nextBySport[id]?.live ? <span className="sport-live">● Live</span>
+                    : nextBySport[id] ? <Countdown to={nextBySport[id].ev.kickoff} />
+                    : <span className="sport-none">—</span>}
+                </span>
               </button>
             ))}
           </nav>
@@ -1093,6 +1171,8 @@ export default function App() {
             </div>
           )}
         </div>
+
+        <p className="context"><span className="mark" aria-hidden="true" />{eyebrow}</p>
 
         {jumped && (
           <p className="jumped">
@@ -1298,7 +1378,7 @@ export default function App() {
         {tab === "upcoming" && nextEvent && !golfOverview && (
           <section className="hero" aria-label={cfg.nextLabel}>
             <p className="hero-eyebrow">{cfg.nextLabel}</p>
-            <h2 className="hero-name"><EventName ev={nextEvent} className="hero-ev" /></h2>
+            <HeroName ev={nextEvent} />
             <p className="hero-meta">
               {nextEvent.rank && (
                 <span className="rank" title={`World number ${nextEvent.rank}`}>
@@ -1315,7 +1395,7 @@ export default function App() {
             <div className="hero-when">
               <time dateTime={nextEvent.t} className="hero-hhmm">{fmtTime(nextEvent.kickoff)}</time>
               <span className="hero-date">{fmtDateHeading(nextEvent.kickoff)}</span>
-              {isNightOwl(nextEvent.kickoff) && <span className="owl">🌙 night owl</span>}
+              {isNightOwl(nextEvent.kickoff) && <span className="owl"><Icon name="moon" size={12} /> night owl</span>}
             </div>
 
             <HeroClock to={nextEvent.kickoff} />
@@ -1336,7 +1416,7 @@ export default function App() {
                   <div className="row-meta">
                     <StagePill ev={ev} />
                   </div>
-                  <EventName ev={ev} />
+                  <EventName ev={ev} crests={18} />
                   {(ev.venue || ev.city) && (
                     <div className="row-where">
                       {[ev.venue, ev.city].filter(Boolean).join(" · ")}
@@ -1366,7 +1446,7 @@ export default function App() {
             aria-pressed={tab === "catchup"}
             onClick={() => setTab("catchup")}
           >
-            🛡 Catch up <span className="count">{buckets.finished.length}</span>
+            <Icon name="shield" size={14} /> Catch up <span className="count">{buckets.finished.length}</span>
           </button>
         </nav>
 
@@ -1518,7 +1598,7 @@ export default function App() {
         {tab === "catchup" && (
           <section>
             <div className="shield">
-              <p className="shield-title">🛡 Spoiler shield is on</p>
+              <p className="shield-title"><Icon name="shield" size={15} /> Spoiler shield is on</p>
               <p className="shield-body">
                 No results shown — only which events have finished. Scores are stripped
                 on the server, so nothing that reaches this page can spoil a match.
@@ -1535,7 +1615,7 @@ export default function App() {
             </div>
 
             {buckets.finished.length === 0 && (
-              <div className="empty">Nothing to catch up on yet. Sleep easy. 🌙</div>
+              <div className="empty">Nothing to catch up on yet. Sleep easy.</div>
             )}
 
             {buckets.finished.map((ev) => (
@@ -1549,7 +1629,7 @@ export default function App() {
                     <StagePill ev={ev} />
                     <span className="done">Finished · {fmtDateHeading(ev.kickoff)}</span>
                   </div>
-                  <EventName ev={ev} />
+                  <EventName ev={ev} crests={18} />
                   <div className="replays">
                     {replays.map((l) => (
                       <a
@@ -1569,7 +1649,7 @@ export default function App() {
                         target="_blank"
                         rel="noopener noreferrer"
                       >
-                        ⚠ YouTube highlights
+                        <Icon name="warn" size={13} /> YouTube highlights
                       </a>
                     )}
                   </div>
@@ -1665,11 +1745,19 @@ p { margin:0 }
 button { font-family:inherit; cursor:pointer }
 :focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:4px }
 
-/* ---------- header ---------- */
-.head { padding:34px 0 18px; border-bottom:1px solid var(--line-2) }
-.eyebrow {
-  display:flex; align-items:center;
-  font-size:0.68rem; letter-spacing:0.26em; text-transform:uppercase;
+/* ---------- header ----------
+   One line: the name, the promise, and whose clock you're reading.
+   It used to take ~200px before anything happened. */
+.head {
+  display:flex; align-items:center; justify-content:space-between;
+  gap:6px 16px; flex-wrap:wrap; padding:20px 0 14px;
+}
+.brand { display:flex; align-items:baseline; gap:6px 14px; flex-wrap:wrap }
+.ic { flex:none; vertical-align:-0.18em }
+/* the sport's context line, just under the tabs */
+.context {
+  display:flex; align-items:center; margin-top:14px;
+  font-size:0.66rem; letter-spacing:0.22em; text-transform:uppercase;
   color:var(--muted); font-weight:700;
 }
 /* the badge: the one place the accent appears at full strength up top */
@@ -1678,14 +1766,16 @@ button { font-family:inherit; cursor:pointer }
   margin-right:10px; border-radius:1px;
 }
 .logo {
-  font-weight:900; font-size:clamp(1.9rem,7vw,3rem); margin:10px 0 4px;
+  font-weight:900; font-size:clamp(1.5rem,5.4vw,2.15rem); margin:0; line-height:1;
   letter-spacing:-0.025em;
 }
-.tagline { font-weight:700; font-size:1rem; letter-spacing:0.06em; margin-bottom:8px }
+.tagline { font-weight:700; font-size:0.86rem; letter-spacing:0.06em }
 .t-tick { color:var(--accent); font-family:var(--mono) }
 .t-kick { color:var(--metal) }
-.lede { color:var(--dim); font-size:0.85rem; max-width:52ch; line-height:1.55 }
-.tzline { color:var(--faint); font-size:0.72rem; margin-top:8px }
+.tzline {
+  display:inline-flex; align-items:center; gap:6px;
+  color:var(--dim); font-size:0.72rem;
+}
 .feed { color:var(--accent-soft) }
 
 /* ---------- sticky nav ---------- */
@@ -1699,11 +1789,20 @@ button { font-family:inherit; cursor:pointer }
 }
 .sports { display:flex; gap:8px }
 .sport {
-  flex:1; padding:11px 6px; border-radius:7px; white-space:nowrap;
+  flex:1; min-width:0; padding:9px 6px 8px; border-radius:8px; white-space:nowrap;
   background:transparent; border:1px solid var(--line); color:var(--dim);
   font-weight:700; font-size:0.82rem; letter-spacing:0.04em;
+  display:flex; flex-direction:column; align-items:center; gap:4px;
   transition:border-color .16s, color .16s, background .16s;
 }
+.sport-top { display:inline-flex; align-items:center; gap:7px }
+/* how long until this sport's next thing: the tab bar as a dashboard */
+.sport-next { font-size:0.7rem; line-height:1; color:var(--faint); min-height:0.8rem }
+.sport-next .cd { font-size:0.7rem; font-weight:600; color:var(--dim) }
+.sport-next .cd i { color:var(--faint) }
+.sport.is-on .sport-next .cd { color:var(--clock) }
+.sport.is-on .sport-next .cd i { color:var(--accent) }
+.sport-live { color:var(--live); font-weight:900; letter-spacing:0.12em; font-size:0.62rem; animation:pulse 1.6s infinite }
 .sport:hover { color:var(--text); border-color:var(--line-2) }
 .sport.is-on {
   background:var(--panel); border-color:var(--line-2); color:var(--text);
@@ -1738,6 +1837,20 @@ button { font-family:inherit; cursor:pointer }
 }
 .hero-name { margin:0 0 8px }
 .hero-ev { font-weight:700; font-size:clamp(1.2rem,5vw,1.75rem) }
+/* crests big, names under them, "vs" between */
+.hero-teams {
+  display:grid; grid-template-columns:1fr auto 1fr; align-items:start; gap:12px;
+  max-width:560px; margin:4px auto 12px;
+}
+.hero-team {
+  display:flex; flex-direction:column; align-items:center; gap:10px;
+  font-weight:700; font-size:clamp(1rem,4.2vw,1.4rem); line-height:1.2;
+}
+.hero-team .crest-ic { width:clamp(44px,12vw,64px); height:clamp(44px,12vw,64px) }
+.hero-vs {
+  align-self:center; margin-top:-1.4em; color:var(--faint);
+  font-family:var(--mono); font-size:0.8rem; letter-spacing:0.12em; text-transform:uppercase;
+}
 .hero-meta {
   display:flex; gap:10px; align-items:center; justify-content:center;
   flex-wrap:wrap; color:var(--muted); font-size:0.85rem;
@@ -1771,7 +1884,7 @@ button { font-family:inherit; cursor:pointer }
   font-size:clamp(1.5rem,6vw,2.8rem); padding-bottom:20px;
   animation:blink 1s steps(1) infinite;
 }
-.hero-sub { color:var(--accent-soft); font-size:0.82rem; margin-top:14px }
+.hero-sub { color:var(--muted); font-size:0.82rem; margin-top:14px }
 
 /* ---------- tabs ---------- */
 .tabs { display:flex; gap:8px; margin:18px 0 14px }
@@ -1870,10 +1983,13 @@ button { font-family:inherit; cursor:pointer }
 .row-main { min-width:0 }
 .row-meta { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:4px }
 .row-where { color:var(--muted); font-size:0.82rem; margin-top:3px }
-.row-sub { color:var(--accent-soft); font-size:0.8rem; margin-top:3px }
+/* context, not an alarm: red is kept for night games and live ones */
+.row-sub { color:var(--dim); font-size:0.8rem; margin-top:3px }
 /* a place name is context, not a highlight — quieter than the course above it */
 .row-place { color:var(--dim); font-size:0.78rem; margin-top:2px }
 .ev-name { font-weight:700; font-size:0.98rem }
+.team { display:inline-flex; align-items:center; gap:7px }
+.crest-ic { flex:none; object-fit:contain }
 .ev-vs { color:var(--faint); font-weight:500 }
 
 .row-clock { display:flex; flex-direction:column; align-items:flex-end; flex-shrink:0; gap:3px }
@@ -1902,7 +2018,10 @@ button { font-family:inherit; cursor:pointer }
   color:var(--accent); border:1px solid var(--accent); border-radius:3px;
   padding:2px 5px; white-space:nowrap; font-variant-numeric:tabular-nums;
 }
-.owl { font-size:0.62rem; letter-spacing:0.1em; color:var(--accent); text-transform:uppercase }
+.owl {
+  display:inline-flex; align-items:center; gap:4px;
+  font-size:0.62rem; letter-spacing:0.1em; color:var(--accent); text-transform:uppercase;
+}
 .done { font-size:0.62rem; letter-spacing:0.1em; color:var(--dim); text-transform:uppercase }
 
 /* ---------- golf tournament banner ---------- */
@@ -1965,7 +2084,13 @@ button { font-family:inherit; cursor:pointer }
   background:var(--panel); border:1px solid var(--line);
   border-left:3px solid var(--accent);
 }
-.shield-title { font-weight:700; font-size:0.85rem; margin-bottom:5px }
+.shield-title {
+  display:flex; align-items:center; gap:7px;
+  font-weight:700; font-size:0.85rem; margin-bottom:5px;
+}
+.shield-title .ic { color:var(--accent) }
+.tab .ic { vertical-align:-0.15em }
+.replay .ic { vertical-align:-0.2em }
 .shield-body { color:var(--muted); font-size:0.78rem; line-height:1.6; max-width:64ch }
 .toggle {
   display:flex; gap:8px; align-items:flex-start; margin-top:12px;
@@ -2005,7 +2130,9 @@ button { font-family:inherit; cursor:pointer }
   .row--tap { padding-right:30px }
   .row-hhmm { font-size:1.3rem }
   .row-clock { grid-column:2; align-items:flex-start }
-  .sport { font-size:0.76rem; padding:10px 4px }
+  .sport { font-size:0.74rem; padding:8px 2px 7px }
+  .sport-top { gap:5px }
+  .sport-top .ic { width:15px; height:15px }
   .hero-when { gap:8px; padding:10px 14px }
 }
 @media (prefers-reduced-motion:reduce) {
