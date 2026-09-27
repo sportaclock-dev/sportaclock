@@ -93,6 +93,8 @@ function mapEvent(ev) {
     city: (comp.venue && comp.venue.address && comp.venue.address.city) || "",
     tag: isSB ? "Super Bowl" : (st ? st.tag : "Regular season"),
     label: st && weekNum ? st.label(weekNum) : "",
+    // US broadcasters (CBS, FOX, ESPN, Prime Video…): who, not what happened
+    tv: [...new Set((comp.broadcasts || []).flatMap((b) => b.names || []))],
     // pre | in | post → the client treats "in" as live, "post" as finished
     state:
       (ev.status && ev.status.type && ev.status.type.state) || "pre",

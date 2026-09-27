@@ -305,6 +305,74 @@ function placeOf(ev, detail, comp) {
   };
 }
 
+/* ------------------------------------------------------------
+   TEAM MATCH PLAY — Presidents Cup, Ryder Cup
+   These come in another shape, which is why the 2026 Presidents Cup
+   never appeared: `competitions` is a list of SESSIONS ("Thursday
+   Four-Balls", "Sunday Singles"), each a list of matches, and a match's
+   two competitors are teams carrying a `roster` (pairs) or an
+   `athlete` (singles). Session 0 is the overall team score and is
+   skipped. There was no `competitors` list to count, so the tournament
+   looked empty and the tab moved on to the next week's event.
+
+   Spoiler shield, same rule as the rest of this file: only who, when,
+   which session and where to watch leave the server. No match scores,
+   and no per-match status either, since a match that finished early
+   tells you somebody won it big.
+   ------------------------------------------------------------ */
+function isMatchPlay(detail) {
+  const comps = detail && detail.competitions;
+  return (detail && detail.tournament && detail.tournament.scoringSystem
+    && detail.tournament.scoringSystem.name === "Match")
+    || (Array.isArray(comps) && Array.isArray(comps[0]));
+}
+
+// ESPN calls the Presidents Cup side "INTL"; the Ryder Cup has Europe.
+const TEAM_NAMES = { INTL: "International", EUR: "Europe", USA: "USA" };
+const logoOf = (t) => (t && Array.isArray(t.logos) && t.logos[0] && t.logos[0].href) || null;
+const tvOf = (m) => [...new Set((m.broadcasts || [])
+  .map((b) => b.media && (b.media.shortName || b.media.name))
+  .filter(Boolean))];
+
+export function matchPlayOf(detail) {
+  if (!isMatchPlay(detail)) return null;
+  const teams = new Map();
+  const matches = [];
+  (detail.competitions || []).forEach((session, si) => {
+    if (!Array.isArray(session)) return;
+    for (const m of session) {
+      if (!m || (m.type && m.type.text === "tournament")) continue;
+      const side = (ha) => {
+        const x = (m.competitors || []).find((c) => c.homeAway === ha);
+        if (!x) return null;
+        const t = x.team || {};
+        const abbr = t.abbreviation || "";
+        if (abbr && !teams.has(abbr)) {
+          teams.set(abbr, { abbr, name: TEAM_NAMES[abbr] || t.displayName || abbr, logo: logoOf(t) });
+        }
+        const players = Array.isArray(x.roster)
+          ? x.roster.map((r) => r.athlete && r.athlete.displayName).filter(Boolean)
+          : x.athlete && x.athlete.displayName ? [x.athlete.displayName] : [];
+        return { team: abbr, players };
+      };
+      const home = side("home"), away = side("away");
+      const teeTime = iso(m.date);
+      if (!home || !away || !teeTime) continue;
+      matches.push({
+        id: String(m.id),
+        session: si,
+        sessionName: m.description || `Session ${si}`,
+        format: (m.type && m.type.text) || "",
+        teeTime,
+        home, away,
+        tv: tvOf(m),
+      });
+    }
+  });
+  matches.sort((a, b) => Date.parse(a.teeTime) - Date.parse(b.teeTime));
+  return { teams: [...teams.values()], matches };
+}
+
 /* Normalise ESPN's event objects. Note `date` / `endDate` — NOT startDate. */
 function mapEvents(events) {
   return (Array.isArray(events) ? events : []).map((e) => ({
@@ -381,9 +449,17 @@ async function fetchSchedule() {
   const enriched = list.map((e, i) => {
     const lb = details[i];
     const detail = (lb && lb.events && lb.events[0]) || lb || {};
-    const comp = (detail.competitions && detail.competitions[0]) || {};
+    const mp = matchPlayOf(detail);
+    const comp = (!mp && detail.competitions && detail.competitions[0]) || {};
     const field = Array.isArray(comp.competitors) ? comp.competitors : [];
-    return { ...e, place: placeOf(detail, detail, comp), fieldSize: field.length };
+    return {
+      ...e,
+      place: placeOf(detail, detail, comp),
+      // a team event's "field" is its matches; counting competitors saw none
+      fieldSize: mp ? mp.matches.length : field.length,
+      major: Boolean(detail.tournament && detail.tournament.major),
+      format: mp ? "match" : "stroke",
+    };
   });
 
   const active =
@@ -420,7 +496,8 @@ export default async function golfRoute(req, res) {
       return null;
     });
     const detail = (lb && lb.events && lb.events[0]) || lb || {};
-    const comp = (detail.competitions && detail.competitions[0]) || {};
+    const mp = matchPlayOf(detail);
+    const comp = (!mp && detail.competitions && detail.competitions[0]) || {};
     const field = Array.isArray(comp.competitors) ? comp.competitors : [];
     const currentRound = num(comp.status && comp.status.period) || null;
     // a fresher venue if this call gave us one, else the cached one
@@ -442,8 +519,9 @@ export default async function golfRoute(req, res) {
     }
     teeTimes.sort((a, b) => Date.parse(a.teeTime) - Date.parse(b.teeTime));
 
-    const rounds = [...new Set(teeTimes.map((t) => t.round).filter(Boolean))]
-      .sort((a, b) => a - b);
+    const rounds = mp
+      ? [...new Set(mp.matches.map((m) => m.session))].sort((a, b) => a - b)
+      : [...new Set(teeTimes.map((t) => t.round).filter(Boolean))].sort((a, b) => a - b);
 
     let ranks = { rankings: [], week: null };
     try {
@@ -472,9 +550,13 @@ export default async function golfRoute(req, res) {
         country: place.country,
         continent: place.continent,
         where: place.where,
-        fieldSize: field.length || active.fieldSize,
+        fieldSize: mp ? mp.matches.length : field.length || active.fieldSize,
         roundsPublished: rounds,
+        major: active.major,
+        format: mp ? "match" : "stroke",
       },
+      teams: mp ? mp.teams : [],
+      matches: mp ? mp.matches : [],
       schedule: list.map((e) => ({
         id: e.id,
         name: e.name,
@@ -484,6 +566,8 @@ export default async function golfRoute(req, res) {
         course: e.place.course,
         where: e.place.where,
         fieldSize: e.fieldSize,
+        major: e.major,
+        format: e.format,
         hasTeeTimes: e.id === active.id && teeTimes.length > 0,
       })),
       teeTimes,

@@ -143,6 +143,13 @@ const NFL_EVENTS = [
 
 /* ---------- SPORT CONFIG ---------- */
 const SPORTS = {
+  mine: {
+    icon: "mine", label: "Mine",
+    eyebrow: "Your clubs, races and golfers · every sport",
+    nextLabel: "Next for you", clockLabel: "to start",
+    durationMin: 120,
+    stages: ["All", "Football", "F1", "NFL", "Golf"],
+  },
   football: {
     icon: "⚽", label: "Football",
     eyebrow: "Football · pick your competition",
@@ -210,6 +217,26 @@ const LEAGUES = {
 /* The owner's teams sit first in the crest bar; everyone else alphabetical.
    Matched as a substring, so "Liverpool FC" and "Philadelphia Eagles" both hit. */
 const PINNED_TEAM = { pl: "Liverpool", cl: "Liverpool", nfl: "Eagles" };
+
+/* ------------------------------------------------------------
+   MINE — the one list across every sport, on the "Mine" tab.
+   Your clubs per competition (substring match, like PINNED_TEAM),
+   the F1 sessions worth staying up for, and your golfers: the
+   GOLF_PINNED players' tee times, plus every session of a team
+   event such as the Presidents Cup or Ryder Cup.
+   ------------------------------------------------------------ */
+const MINE = {
+  football: { pl: ["Liverpool"], cl: ["Liverpool"], is: [] },
+  nfl: ["Eagles"],
+  f1: ["Race", "Qualifying", "Sprint", "Sprint Qualifying"],
+  golf: true,
+};
+
+/* Where each competition is on TV in Iceland. ESPN only knows US
+   channels and no feed carries Icelandic ones, so this is by hand:
+   put a channel name in and it shows beside every event of that
+   competition. null = nothing shown. */
+const TV_ICELAND = { pl: null, cl: null, is: null, f1: null, nfl: null, golf: null };
 
 /* ------------------------------------------------------------
    GOLF WATCHLIST
@@ -280,6 +307,9 @@ const onList = (player, list) => list.some((n) => samePlayer(player, n));
 const WEEKEND_ROUNDS = [3, 4];
 
 const golfVisible = (ev, scope, showWeekend, watchlist) => {
+  // A team event's sessions aren't ordered by score, and every match
+  // matters, so neither the weekend shield nor the watchlist applies.
+  if (ev.match) return true;
   if (!showWeekend && WEEKEND_ROUNDS.includes(ev.round)) return false;
   if (scope === "field") return true;
   return onList(ev.player, scope === "mine" ? GOLF_PINNED : watchlist);
@@ -441,7 +471,24 @@ const ICONS = {
   moon: <path d="M19.5 14.6A7.8 7.8 0 1 1 9.4 4.5a6.2 6.2 0 0 0 10.1 10.1z" />,
   warn: <><path d="M12 4l9 16H3z" /><path d="M12 10v4.5M12 17.3v.1" /></>,
   clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3.2 2" /></>,
+  mine: <path d="M12 3.5l2.6 5.3 5.8.8-4.2 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.2-4.1 5.8-.8z" />,
+  tv: <><rect x="3" y="6.5" width="18" height="12" rx="2" /><path d="M8.5 3.5L12 6.5l3.5-3" /></>,
 };
+
+/* Where to watch. US channels come with the ESPN data (NFL, golf);
+   Icelandic ones only from TV_ICELAND, filled in by hand. */
+function TvLine({ ev }) {
+  const here = TV_ICELAND[ev.sport === "football" ? ev.league : ev.sport];
+  const us = ev.tv || [];
+  if (!here && !us.length) return null;
+  return (
+    <div className="row-tv">
+      <Icon name="tv" size={13} />
+      {here && <span className="row-tv-here">{here}</span>}
+      {us.length > 0 && <span className="row-tv-us">US: {us.join(", ")}</span>}
+    </div>
+  );
+}
 function Icon({ name, size = 16 }) {
   return (
     <svg className="ic" width={size} height={size} viewBox="0 0 24 24" fill="none"
@@ -576,7 +623,7 @@ function TapRow({ className = "", onOpen, label, children }) {
 }
 
 /* The departure-board row. Memoised so the parent can re-render freely. */
-const EventRow = React.memo(function EventRow({ ev, clockLabel, off }) {
+const EventRow = React.memo(function EventRow({ ev, clockLabel, off, showSport }) {
   const owl = !off && isNightOwl(ev.kickoff);
   return (
     <article className={`row${owl ? " row--owl" : ""}${off ? " row--off" : ""}` +
@@ -598,6 +645,9 @@ const EventRow = React.memo(function EventRow({ ev, clockLabel, off }) {
 
       <div className="row-main">
         <div className="row-meta">
+          {showSport && ev.sport && (
+            <span className="sportmark" title={SPORTS[ev.sport]?.label}><Icon name={ev.sport} size={13} /></span>
+          )}
           {ev.rank && <span className="rank" title={`World number ${ev.rank}`}>#{ev.rank}</span>}
           <StagePill ev={ev} />
           {owl && <span className="owl"><Icon name="moon" size={11} /> night owl</span>}
@@ -611,6 +661,7 @@ const EventRow = React.memo(function EventRow({ ev, clockLabel, off }) {
         {off
           ? <div className="row-sub">Was set for {fmtDateHeading(ev.kickoff)}</div>
           : ev.sub && <div className="row-sub">{ev.sub}</div>}
+        {!off && <TvLine ev={ev} />}
       </div>
 
       <div className="row-clock">
@@ -634,6 +685,7 @@ const EventRow = React.memo(function EventRow({ ev, clockLabel, off }) {
    ============================================================ */
 function buildEvents(sport, league, football, nflApi, golfApi) {
   const mins = (n) => n * 60000;
+  if (sport === "mine") return mineEvents(football, nflApi, golfApi);
 
   if (sport === "football") {
     const src = football[league];
@@ -655,6 +707,7 @@ function buildEvents(sport, league, football, nflApi, golfApi) {
           durationMs: mins(SPORTS.football.durationMin),
           home: m.home, away: m.away,
           homeCrest: m.homeCrest, awayCrest: m.awayCrest,
+          sport: "football", league,
           venue: "", city: "",
           tag, stage: stageLbl, sub: "",
           apiStatus: m.status || undefined,
@@ -669,6 +722,32 @@ function buildEvents(sport, league, football, nflApi, golfApi) {
     if (!golfApi || !golfApi.enabled) return [];
     const t = golfApi.tournament || {};
     const ranks = golfApi.rankings || [];
+
+    // A team event: one row per match, flags for crests, the session as tag.
+    if (t.format === "match") {
+      const team = (abbr) => (golfApi.teams || []).find((x) => x.abbr === abbr) || { name: abbr };
+      const side = (s) => (s.players.length ? s.players.join(" & ") : team(s.team).name);
+      return (golfApi.matches || []).map((m) => {
+        const players = [...m.home.players, ...m.away.players];
+        return {
+          id: `golf-m-${m.id}`,
+          t: m.teeTime,
+          kickoff: new Date(m.teeTime).getTime(),
+          durationMs: mins(m.format === "singles" ? 240 : 270),
+          home: side(m.home), away: side(m.away),
+          homeCrest: team(m.home.team).logo || null, awayCrest: team(m.away.team).logo || null,
+          player: players.join(" / "),
+          sport: "golf", match: true,
+          round: m.session, roundLabel: m.sessionName,
+          venue: t.course || "", city: t.where || t.city || "",
+          tag: m.sessionName, stage: m.sessionName,
+          sub: `${team(m.home.team).name} v ${team(m.away.team).name}`,
+          mine: players.some((p) => onList(p, GOLF_PINNED)),
+          tv: m.tv || [],
+        };
+      }).sort((a, b) => a.kickoff - b.kickoff);
+    }
+
     return (golfApi.teeTimes || [])
       .filter((x) => x.teeTime && x.player)
       .map((x) => ({
@@ -678,6 +757,7 @@ function buildEvents(sport, league, football, nflApi, golfApi) {
         durationMs: mins(SPORTS.golf.durationMin),
         title: x.player,
         player: x.player,
+        sport: "golf",
         round: x.round,
         venue: t.course || "",
         city: t.where || t.city || "",
@@ -700,6 +780,7 @@ function buildEvents(sport, league, football, nflApi, golfApi) {
         home: e.home, away: e.away,
         title: e.title, // undecided playoff rounds have a title and no teams
         homeCrest: e.homeLogo, awayCrest: e.awayLogo,
+        sport: "nfl", tv: e.tv || [],
         venue: e.venue, city: e.city,
         tag: e.tag, stage: e.tag, sub: e.label,
         apiStatus: e.state === "in" ? "IN_PLAY"
@@ -711,11 +792,58 @@ function buildEvents(sport, league, football, nflApi, golfApi) {
   return (STATIC_EVENTS[sport] || [])
     .map((m, i) => ({
       ...m,
+      sport,
       id: `${sport}-${i}-${m.t}`,
       kickoff: new Date(m.t).getTime(),
       durationMs: mins(m.dur || SPORTS[sport].durationMin),
     }))
     .sort((a, b) => a.kickoff - b.kickoff);
+}
+
+/* The Mine tab: every sport's events, kept only where they're yours. Each
+   keeps its sport (and league), so a row can show the right icon, clock
+   label, TV channel and replay links. */
+function mineEvents(football, nflApi, golfApi) {
+  const out = [];
+  const tagged = (ev, s, extra) => ({
+    ...ev, ...extra, id: `mine-${ev.id}`, sport: s, stage: SPORTS[s].label,
+  });
+  const has = (ev, names) =>
+    names.some((n) => (ev.home || "").includes(n) || (ev.away || "").includes(n));
+
+  for (const [l, names] of Object.entries(MINE.football)) {
+    if (!names.length) continue;
+    for (const ev of buildEvents("football", l, football, nflApi, golfApi)) {
+      if (has(ev, names)) out.push(tagged(ev, "football", { league: l, tag: LEAGUES[l].label, sub: ev.tag }));
+    }
+  }
+  for (const ev of buildEvents("nfl", null, football, nflApi, golfApi)) {
+    // the row's sport icon already says NFL / F1 / Golf, so no pill repeating it
+    if (has(ev, MINE.nfl)) out.push(tagged(ev, "nfl", { tag: "" }));
+  }
+  for (const ev of buildEvents("f1", null, football, nflApi, golfApi)) {
+    if (MINE.f1.includes(ev.tag)) out.push(tagged(ev, "f1", { tag: "" }));
+  }
+  if (MINE.golf) {
+    const name = golfApi.tournament?.name || "Golf";
+    const sessions = new Set();
+    for (const ev of buildEvents("golf", null, football, nflApi, golfApi)) {
+      if (ev.match) {
+        // a team event: one row per session, when its first match goes out
+        if (sessions.has(ev.round)) continue;
+        sessions.add(ev.round);
+        out.push(tagged(ev, "golf", {
+          home: null, away: null, homeCrest: null, awayCrest: null, player: null,
+          title: `${name} — ${ev.roundLabel}`, tag: "",
+        }));
+      } else if (ev.mine) {
+        out.push(tagged(ev, "golf", {
+          sub: [name, ev.sub].filter(Boolean).join(" · "),
+        }));
+      }
+    }
+  }
+  return out.sort((a, b) => a.kickoff - b.kickoff);
 }
 
 /* What each sport puts forward when the site decides where to open.
@@ -731,11 +859,11 @@ function buildEvents(sport, league, football, nflApi, golfApi) {
 function landingCandidates(sport, league, football, nflApi, golfApi, watchlist) {
   const evs = buildEvents(sport, league, football, nflApi, golfApi);
   if (sport !== "golf") return evs;
-  if (!evs.some((ev) => onList(ev.player, watchlist))) return [];
+  if (!evs.some((ev) => ev.match || onList(ev.player, watchlist))) return [];
 
   const firstOfRound = new Map();
   for (const ev of evs) {
-    if (!ev.round || WEEKEND_ROUNDS.includes(ev.round)) continue;
+    if (!ev.round || (!ev.match && WEEKEND_ROUNDS.includes(ev.round))) continue;
     const held = firstOfRound.get(ev.round);
     if (!held || ev.kickoff < held.kickoff) firstOfRound.set(ev.round, ev);
   }
@@ -751,7 +879,7 @@ const ALL_VIEWS = [
 /* ============================================================ */
 
 export default function App() {
-  const [sport, setSport] = useState("football");
+  const [sport, setSport] = useState("mine");
   const [league, setLeague] = useState("pl");
   const [tab, setTab] = useState("upcoming");
   const [query, setQuery] = useState("");
@@ -769,6 +897,7 @@ export default function App() {
   const [golfApi, setGolfApi] = useState({
     enabled: false, teeTimes: [], tournament: null,
     rankings: [], rankingsWeek: null, schedule: [],
+    teams: [], matches: [],
   });
   const [golfScope, setGolfScope] = useState("watchlist"); // mine | watchlist | field
   // Live top N when OWGR answered, the built-in list when it didn't.
@@ -838,6 +967,8 @@ export default function App() {
             rankings: data.rankings || [],
             rankingsWeek: data.rankingsWeek || null,
             schedule: data.schedule || [],
+            teams: data.teams || [],
+            matches: data.matches || [],
           });
         }
       } catch { /* golf tab shows an empty state */ }
@@ -859,6 +990,14 @@ export default function App() {
   useEffect(() => {
     if (autoDone || pinned.current) return;
     if (!loaded.football || !loaded.nfl || !loaded.golf) return;
+
+    // Mine is home whenever it has anything coming up or under way; the
+    // jump to the soonest event anywhere is only the fallback.
+    if (sport === "mine" && buildEvents("mine", null, football, nflApi, golfApi)
+      .some((ev) => classify(ev, Date.now()) !== "finished")) {
+      setAutoDone(true);
+      return;
+    }
 
     const now = Date.now();
     let bestLive = null, bestNext = null;
@@ -916,8 +1055,10 @@ export default function App() {
   // which of your two are actually in this week's field
   const golfPinnedIn = useMemo(() => {
     if (sport !== "golf" || !golfApi.enabled) return [];
-    return GOLF_PINNED.filter((n) =>
-      golfApi.teeTimes.some((t) => samePlayer(t.player, n)));
+    const players = golfApi.tournament?.format === "match"
+      ? (golfApi.matches || []).flatMap((m) => [...m.home.players, ...m.away.players])
+      : golfApi.teeTimes.map((t) => t.player);
+    return GOLF_PINNED.filter((n) => players.some((p) => samePlayer(p, n)));
   }, [sport, golfApi]);
 
   const fieldPublished = (golfTourn?.fieldSize || 0) > 0;
@@ -967,7 +1108,7 @@ export default function App() {
      never disagree. A live event wins its tab. */
   const nextBySport = useMemo(() => {
     const out = {};
-    for (const [s, l] of ALL_VIEWS) {
+    for (const [s, l] of [["mine", null], ...ALL_VIEWS]) {
       for (const ev of landingCandidates(s, l, football, nflApi, golfApi, golfWatchlist)) {
         const kind = classify(ev, boundary);
         const cur = out[s];
@@ -980,6 +1121,30 @@ export default function App() {
     return out;
   }, [football, nflApi, golfApi, golfWatchlist, boundary]);
 
+  /* Everything on now or starting within the hour, in every sport, not
+     just yours: the "what can I put on" list at the top of Mine. Golf is
+     one row per round (per session for a team event), not per golfer.
+     `boundary` moves at least once a minute, so the hour window keeps up. */
+  const onNow = useMemo(() => {
+    const out = [];
+    const golfName = golfApi.tournament?.name || "Golf";
+    for (const [s, l] of ALL_VIEWS) {
+      for (const ev of landingCandidates(s, l, football, nflApi, golfApi, golfWatchlist)) {
+        const kind = classify(ev, boundary);
+        if (kind !== "live" && !(kind === "upcoming" && ev.kickoff - boundary <= 3600000)) continue;
+        const row = { ...ev, id: `now-${ev.id}`, sport: s, league: l, live: kind === "live" };
+        if (s === "golf") {
+          Object.assign(row, {
+            home: null, away: null, homeCrest: null, awayCrest: null,
+            title: `${golfName} — ${ev.roundLabel || ev.tag}`, tag: "",
+          });
+        }
+        out.push(row);
+      }
+    }
+    return out.sort((a, b) => (b.live - a.live) || (a.kickoff - b.kickoff));
+  }, [football, nflApi, golfApi, golfWatchlist, boundary]);
+
   /* One entry per published round: when the first and last groups go out, and
      how many are in it. Deliberately NOT scope-filtered — the overview should
      describe the actual tee sheet, not your watchlist. */
@@ -988,7 +1153,7 @@ export default function App() {
     const byRound = new Map();
     for (const ev of events) {
       if (!ev.round) continue;
-      if (!showWeekend && WEEKEND_ROUNDS.includes(ev.round)) continue;
+      if (!ev.match && !showWeekend && WEEKEND_ROUNDS.includes(ev.round)) continue;
       if (!byRound.has(ev.round)) byRound.set(ev.round, []);
       byRound.get(ev.round).push(ev);
     }
@@ -1001,8 +1166,12 @@ export default function App() {
         const closes = last + 5 * 3600000;
         return {
           round, first, last,
+          label: list[0].roundLabel || `Round ${round}`,
+          unit: list[0].match ? "matches" : "tee times",
           count: list.length,
-          mine: list.filter((e) => e.mine).length,
+          // which of your two are out in this round, by name: the old text
+          // named both whenever either one was playing
+          mineNames: GOLF_PINNED.filter((n) => list.some((e) => e.mine && samePlayer(e.player, n))),
           state: boundary < first ? "upcoming" : boundary < closes ? "underway" : "done",
         };
       })
@@ -1059,6 +1228,7 @@ export default function App() {
 
   /* ---- clickable crest bar, wherever crests are available ---- */
   const teamBar = useMemo(() => {
+    if (sport === "mine") return []; // a crest bar of your opponents would be odd
     const map = new Map();
     for (const ev of events) {
       if (ev.home && ev.homeCrest && !map.has(ev.home)) map.set(ev.home, ev.homeCrest);
@@ -1098,12 +1268,16 @@ export default function App() {
   };
   const switchLeague = (l) => { pinned.current = true; setJumped(null); setLeague(l); clearFilters(); };
 
+  // In Mine, each row knows its own sport and league.
+  const replaysFor = (ev) => (ev.sport === "football"
+    ? LEAGUE_REPLAYS[ev.league] || [] : SPORTS[ev.sport]?.replays || []);
   const ytQuery = (ev) => {
+    const s = ev.sport || sport, lg = ev.league || league;
     const matchup = ev.home ? `${ev.home} vs ${ev.away}` : ev.title;
-    const context = sport === "football"
-      ? (league === "pl" ? "premier league" : league === "cl" ? "champions league" : "besta deildin")
-      : sport === "nfl" ? "NFL 2026"
-      : sport === "golf" ? `${golfTourn?.name || "PGA Tour"} 2026` : "F1 2026";
+    const context = s === "football"
+      ? (lg === "pl" ? "premier league" : lg === "cl" ? "champions league" : "besta deildin")
+      : s === "nfl" ? "NFL 2026"
+      : s === "golf" ? `${golfTourn?.name || "PGA Tour"} 2026` : "F1 2026";
     return `https://www.youtube.com/results?search_query=${
       encodeURIComponent(`${matchup} ${context} highlights`)}`;
   };
@@ -1195,17 +1369,29 @@ export default function App() {
                 : golfTourn.state === "post" ? "Finished"
                 : golfTourn.detail || "Starts soon"}
             </p>
-            <h2 className="tourn-name">{golfTourn.name}</h2>
+            <h2 className="tourn-name">
+              {golfTourn.name}
+              {golfTourn.major && <span className="pill pill--major">Major</span>}
+            </h2>
             {golfTourn.course && <p className="tourn-course">{golfTourn.course}</p>}
             {golfTourn.where && <p className="tourn-where">{golfTourn.where}</p>}
             {golfRound === null && (
               <>
                 {fieldPublished ? (
                   <p className="tourn-field">
-                    {golfTourn.fieldSize} in the field
-                    {golfTourn.roundsPublished?.length > 0 && (
-                      <> · tee times out for round{golfTourn.roundsPublished.length > 1 ? "s" : ""}{" "}
-                        {golfTourn.roundsPublished.join(" and ")}</>
+                    {golfTourn.format === "match" ? (
+                      <>
+                        {(golfApi.teams || []).map((x) => x.name).join(" v ")} · team match play
+                        · {golfTourn.fieldSize} matches over {golfTourn.roundsPublished?.length || 0} sessions
+                      </>
+                    ) : (
+                      <>
+                        {golfTourn.fieldSize} in the field
+                        {golfTourn.roundsPublished?.length > 0 && (
+                          <> · tee times out for round{golfTourn.roundsPublished.length > 1 ? "s" : ""}{" "}
+                            {golfTourn.roundsPublished.join(" and ")}</>
+                        )}
+                      </>
                     )}
                   </p>
                 ) : (
@@ -1225,6 +1411,8 @@ export default function App() {
                   </div>
                 )}
                 {!fieldPublished ? null
+                  // a team event without your two is simply a team event
+                  : golfTourn.format === "match" && golfPinnedIn.length === 0 ? null
                   : golfPinnedIn.length === GOLF_PINNED.length ? (
                   <p className="tourn-yes">
                     Both {GOLF_PINNED.map((n) => n.split(" ").pop()).join(" and ")} are playing.
@@ -1248,7 +1436,8 @@ export default function App() {
 
         {/* The weekend shield belongs here, not in the filters — it decides which
             rounds exist at all, so it has to be reachable from the overview. */}
-        {sport === "golf" && golfApi.enabled && golfRounds.length > 0 && (
+        {sport === "golf" && golfApi.enabled && golfRounds.length > 0
+          && golfTourn?.format !== "match" && (
           weekendAvailable ? (
             <label className="toggle toggle--weekend">
               <input
@@ -1282,7 +1471,7 @@ export default function App() {
                 key={r.round}
                 className={`${focusRound?.round === r.round ? "row--mine" : ""}` +
                   `${r.state === "done" ? " row--off" : ""}`}
-                label={`Round ${r.round} tee times`}
+                label={`${r.label} ${r.unit}`}
                 onOpen={() => setGolfRound(r.round)}
               >
                 <div className="row-time">
@@ -1293,7 +1482,7 @@ export default function App() {
                 </div>
                 <div className="row-main">
                   <div className="row-meta">
-                    <span className="pill">Round {r.round}</span>
+                    <span className="pill">{r.label}</span>
                     {nextToStart?.round === r.round && (
                       <span className="owl">next up</span>
                     )}
@@ -1303,11 +1492,11 @@ export default function App() {
                   </div>
                   <span className="ev-name">{fmtDateHeading(r.first)}</span>
                   <div className="row-where">
-                    {r.count} tee times · first off {fmtTime(r.first)}, last {fmtTime(r.last)}
+                    {r.count} {r.unit} · first off {fmtTime(r.first)}, last {fmtTime(r.last)}
                   </div>
-                  {r.mine > 0 && (
+                  {r.mineNames.length > 0 && (
                     <div className="row-sub">
-                      {GOLF_PINNED.map((n) => n.split(" ").pop()).join(" and ")} out this round
+                      {r.mineNames.map((n) => n.split(" ").pop()).join(" and ")} out this {r.unit === "matches" ? "session" : "round"}
                     </div>
                   )}
                 </div>
@@ -1352,7 +1541,11 @@ export default function App() {
                       <span className="row-dow">{fmtWeekdayShort(t.startMs)}</span>
                     </div>
                     <div className="row-main">
-                      <span className="ev-name">{t.name}</span>
+                      <span className="ev-name">
+                        {t.name}
+                        {t.major && <span className="pill pill--major">Major</span>}
+                        {t.format === "match" && <span className="pill pill--team">Team event</span>}
+                      </span>
                       {t.course && <div className="row-where">{t.course}</div>}
                       {t.where && <div className="row-place">{t.where}</div>}
                       {!t.course && !t.where && (
@@ -1374,10 +1567,48 @@ export default function App() {
           </section>
         )}
 
+        {/* ---------- Mine: on now and within the hour, every sport ---------- */}
+        {sport === "mine" && tab === "upcoming" && onNow.length > 0 && (
+          <section className="onnow" aria-label="On now and within the hour">
+            <h3 className="dayhead">On now &amp; within the hour · every sport</h3>
+            {onNow.map((ev) => (
+              <article key={ev.id} className={`row${ev.live ? " row--live" : ""}`}>
+                {/* compact: this list sits above the hero, so every row is one line */}
+                <div className="row-time">
+                  <time dateTime={ev.t} className="row-hhmm">{fmtTime(ev.kickoff)}</time>
+                  <span className="row-dow" title={SPORTS[ev.sport]?.label}>
+                    <Icon name={ev.sport} size={12} /> {SPORTS[ev.sport]?.label}
+                  </span>
+                </div>
+                <div className="row-main">
+                  <EventName ev={ev} crests={18} />
+                  <TvLine ev={ev} />
+                </div>
+                <div className="row-clock">
+                  {ev.live ? (
+                    <>
+                      <span className="livetag">● Live</span>
+                      <Elapsed from={ev.kickoff} />
+                    </>
+                  ) : (
+                    <>
+                      <Countdown to={ev.kickoff} />
+                      <span className="row-clock-label">{SPORTS[ev.sport]?.clockLabel}</span>
+                    </>
+                  )}
+                </div>
+              </article>
+            ))}
+          </section>
+        )}
+
         {/* ---------- hero: the next event ---------- */}
         {tab === "upcoming" && nextEvent && !golfOverview && (
           <section className="hero" aria-label={cfg.nextLabel}>
-            <p className="hero-eyebrow">{cfg.nextLabel}</p>
+            <p className="hero-eyebrow">
+              {sport === "mine" && nextEvent.sport && <Icon name={nextEvent.sport} size={12} />}
+              {cfg.nextLabel}
+            </p>
             <HeroName ev={nextEvent} />
             <p className="hero-meta">
               {nextEvent.rank && (
@@ -1400,11 +1631,12 @@ export default function App() {
 
             <HeroClock to={nextEvent.kickoff} />
             {nextEvent.sub && <p className="hero-sub">{nextEvent.sub}</p>}
+            <div className="hero-tv"><TvLine ev={nextEvent} /></div>
           </section>
         )}
 
         {/* ---------- live now ---------- */}
-        {buckets.live.length > 0 && (
+        {buckets.live.length > 0 && sport !== "mine" && (
           <section className="livewrap" aria-label="Live now">
             {buckets.live.map((ev) => (
               <article key={ev.id} className="row row--live">
@@ -1478,12 +1710,12 @@ export default function App() {
                   aria-pressed={golfRound === r.round}
                   onClick={() => setGolfRound(r.round)}
                 >
-                  Round {r.round}
+                  {r.label}
                 </button>
               ))}
             </div>
           )}
-          {sport === "golf" && golfApi.enabled && (
+          {sport === "golf" && golfApi.enabled && golfTourn?.format !== "match" && (
             <>
               <div className="chips" role="group" aria-label="Which players">
                 {[
@@ -1587,7 +1819,12 @@ export default function App() {
               <div key={day.key} className="day">
                 <h3 className="dayhead">{fmtDateHeading(day.ts)}</h3>
                 {day.items.map((ev) => (
-                  <EventRow key={ev.id} ev={ev} clockLabel={cfg.clockLabel} />
+                  <EventRow
+                    key={ev.id}
+                    ev={ev}
+                    clockLabel={SPORTS[ev.sport]?.clockLabel || cfg.clockLabel}
+                    showSport={sport === "mine"}
+                  />
                 ))}
               </div>
             ))}
@@ -1631,7 +1868,7 @@ export default function App() {
                   </div>
                   <EventName ev={ev} crests={18} />
                   <div className="replays">
-                    {replays.map((l) => (
+                    {(sport === "mine" ? replaysFor(ev) : replays).map((l) => (
                       <a
                         key={l.name}
                         className="replay"
@@ -2018,6 +2255,21 @@ button { font-family:inherit; cursor:pointer }
   color:var(--accent); border:1px solid var(--accent); border-radius:3px;
   padding:2px 5px; white-space:nowrap; font-variant-numeric:tabular-nums;
 }
+.sportmark { display:inline-flex; color:var(--muted) }
+.row-tv {
+  display:flex; align-items:center; gap:4px 10px; flex-wrap:wrap;
+  font-size:0.76rem; color:var(--muted); margin-top:5px;
+}
+.row-tv .ic { color:var(--dim) }
+.row-tv-here { color:var(--text); font-weight:600 }
+.row-tv-us { color:var(--dim) }
+.hero-tv .row-tv { justify-content:center; margin-top:10px }
+.hero-eyebrow .ic { vertical-align:-0.2em; margin-right:6px }
+.onnow { margin-top:16px }
+.onnow .row { padding-top:10px; padding-bottom:10px; margin-bottom:6px }
+.onnow .row-dow { display:inline-flex; align-items:center; gap:4px }
+.pill--major { color:var(--text); border-color:var(--accent); margin-left:10px; vertical-align:middle }
+.pill--team { margin-left:10px; vertical-align:middle }
 .owl {
   display:inline-flex; align-items:center; gap:4px;
   font-size:0.62rem; letter-spacing:0.1em; color:var(--accent); text-transform:uppercase;
@@ -2130,7 +2382,13 @@ button { font-family:inherit; cursor:pointer }
   .row--tap { padding-right:30px }
   .row-hhmm { font-size:1.3rem }
   .row-clock { grid-column:2; align-items:flex-start }
-  .sport { font-size:0.74rem; padding:8px 2px 7px }
+  /* five tabs on a phone: widths follow the labels instead of fifths */
+  .sport { flex:1 1 auto; font-size:0.74rem; padding:8px 4px 7px }
+  /* on-now rows stay three columns on a phone; the elapsed time can go */
+  .onnow .row { grid-template-columns:58px 1fr auto; gap:10px; row-gap:0 }
+  .onnow .row-clock { grid-column:auto; align-items:flex-end }
+  .onnow .row-hhmm { font-size:1.15rem }
+  .onnow .elapsed, .onnow .row-clock-label { display:none }
   .sport-top { gap:5px }
   .sport-top .ic { width:15px; height:15px }
   .hero-when { gap:8px; padding:10px 14px }
