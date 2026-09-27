@@ -2,7 +2,7 @@
    espn.js — one door to ESPN for the whole server.
 
    WHY THIS EXISTS
-   golf.js, nfl.js and ynwa.js all call ESPN from the same address.
+   golf.js, nfl.js and nfl-is/ all call ESPN from the same address.
    When ESPN started refusing, each backed off on its own schedule
    and carried on asking — so a chatty new feature took the golf tab
    down with it. Everything now shares one counter: a few refusals

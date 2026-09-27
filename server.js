@@ -3,19 +3,11 @@ import path from "path";
 import { fileURLToPath } from "url";
 import nflRoute from "./nfl.js";
 import golfRoute from "./golf.js";
-import { ynwaApi, ynwaPage, ynwaProbe, ynwaArchivePage } from "./ynwa.js";
-import { commentsGet, commentsPost, commentsDelete } from "./comments.js";
-import { archiveList, archiveOne, archiveCreate, archiveSearch } from "./archive.js";
 import { espnTry } from "./espn.js";
 import { mountNflIs } from "./nfl-is/index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
-// Railway sits behind a reverse proxy — without this, req.ip would be the
-// proxy's address for every request, making the comment rate-limiter
-// (which keys off req.ip) useless.
-app.set("trust proxy", true);
-app.use(express.json({ limit: "8kb" })); // small cap — comments are short by design
 const PORT = process.env.PORT || 3000;
 const TOKEN = process.env.FOOTBALL_DATA_TOKEN;
 
@@ -343,9 +335,9 @@ async function icelandHandler(res) {
       football-data.org gates a lot of competitions by tier.)
 
    2. ESPN's soccer API under the eng.fa / eng.league_cup slugs —
-      guessed when YNWA's fixture hunt was built, never confirmed.
+      guessed when the Liverpool feed was built, never confirmed.
       Free, and goes through the shared circuit breaker, so it can't
-      make things worse for golf/nfl/ynwa even if this gets hit hard.
+      make things worse for golf or the NFL feeds even if this gets hit hard.
 
    MUST be registered before /api/football/:comp — that route treats
    any path segment as a competition code, so "probe" would otherwise
@@ -455,19 +447,9 @@ app.get("/api/football/:comp", (req, res) => {
 app.get("/api/nfl", nflRoute);
 app.get("/api/golf", golfRoute);
 
-// YNWA experiment — a standalone Liverpool live feed in Icelandic.
-// Registered before the SPA catch-all so /ynwa serves its own page.
-app.get("/api/ynwa", ynwaApi);
-app.get("/api/ynwa/probe", ynwaProbe);
-app.get("/api/ynwa/comments", commentsGet);
-app.post("/api/ynwa/comments", commentsPost);
-app.delete("/api/ynwa/comments", commentsDelete);
-app.get("/api/ynwa/archive", archiveList);
-app.get("/api/ynwa/archive/match", archiveOne);
-app.post("/api/ynwa/archive", archiveCreate);
-app.get("/api/ynwa/archive/search", archiveSearch);
-app.get("/ynwa", ynwaPage);
-app.get("/ynwa/leikir", ynwaArchivePage);
+// YNWA grew up here and moved to its own domain. Old links and bookmarks
+// (the page, the archive, anything under it) land on ynwa.is.
+app.get(["/ynwa", "/ynwa/*"], (req, res) => res.redirect(301, "https://ynwa.is/"));
 
 // NFL á íslensku — a separate product staged at /nfl. It SHOWS scores,
 // so it has its own data path and never feeds the spoiler-free /api routes.

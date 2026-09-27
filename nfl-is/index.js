@@ -130,7 +130,7 @@ export function mountNflIs(app) {
 
     // ESPN is only asked about ids already on a roster. A made-up id would
     // come back 404, espn.js counts that as a refusal, and three of those
-    // would pause golf, the NFL tab and YNWA for ten minutes.
+    // would pause golf and the main NFL tab for ten minutes.
     const [d, roster] = await Promise.all([common(), getRoster(ab)]);
     const player = find(roster);
     if (!player) {

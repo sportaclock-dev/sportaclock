@@ -641,6 +641,7 @@ function buildEvents(sport, league, football, nflApi, golfApi) {
         kickoff: new Date(e.date).getTime(),
         durationMs: mins(SPORTS.nfl.durationMin),
         home: e.home, away: e.away,
+        title: e.title, // undecided playoff rounds have a title and no teams
         homeCrest: e.homeLogo, awayCrest: e.awayLogo,
         venue: e.venue, city: e.city,
         tag: e.tag, stage: e.tag, sub: e.label,

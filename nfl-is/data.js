@@ -14,7 +14,7 @@ const SEED = (() => {
    staged on sportaclock.com, so nothing here is shared with the
    spoiler-free main site: its own fetches, its own caches.
 
-   ESPN is shared with golf, the NFL tab and YNWA through espn.js,
+   ESPN is shared with golf and the main NFL tab through espn.js,
    whose breaker pauses ALL of them after a few refusals. So:
      - every request from this module goes through one queue, spaced
        out, so a crawler walking 32 team pages can't fire a burst;
@@ -72,7 +72,7 @@ async function cached(key, ttl, load) {
       }
       // Never succeeded: remember the failure too. Without this every
       // page view retried at once, and three in a row trip espn.js's
-      // breaker, which silences golf, the NFL tab and YNWA with it.
+      // breaker, which silences golf and the main NFL tab with it.
       store.set(key, { failedAt: Date.now() });
       return null;
     });
@@ -260,7 +260,7 @@ export async function getRoster(ab) {
    the roster lacks: the season's headline stats (with league rank) and
    draft details. There are ~1,700 players, so a crawler walking every
    profile could otherwise queue that many ESPN calls, and a refusal
-   streak trips the breaker golf and YNWA share. Hence a budget: past it,
+   streak trips the breaker golf and the NFL tab share. Hence a budget: past it,
    profiles render from the roster alone and say the stats will follow. */
 const ATHLETE = "https://site.api.espn.com/apis/common/v3/sports/football/nfl/athletes";
 

@@ -2,10 +2,10 @@
    NFL á íslensku — the one thing worth keeping across deploys:
    which YouTube video belongs to which game.
 
-   Same Upstash Redis as /ynwa's comments, same REST shape, duplicated
-   here rather than imported for the reason archive.js gives: this
-   folder is meant to move to its own domain in one piece. Keys start
-   with "nfl:" so they can't meet YNWA's.
+   Upstash Redis over its REST API (UPSTASH_REDIS_REST_URL / _TOKEN on
+   Railway), kept inside this folder so it can move to its own domain
+   in one piece. Keys start with "nfl:" so they can't meet anything
+   else sharing the instance.
 
    Without UPSTASH_* set (local dev) every call is a no-op and the
    highlights live in memory only, as before.
