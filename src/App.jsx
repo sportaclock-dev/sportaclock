@@ -1,6 +1,7 @@
 import React, {
   useState, useEffect, useMemo, useRef, useSyncExternalStore,
 } from "react";
+import { ukTv } from "./tv.js";
 
 /* ============================================================
    SPORTACLOCK — Ready. Tick. Kick.
@@ -232,11 +233,7 @@ const MINE = {
   golf: true,
 };
 
-/* Where each competition is on TV in Iceland. ESPN only knows US
-   channels and no feed carries Icelandic ones, so this is by hand:
-   put a channel name in and it shows beside every event of that
-   competition. null = nothing shown. */
-const TV_ICELAND = { pl: null, cl: null, is: null, f1: null, nfl: null, golf: null };
+
 
 /* ------------------------------------------------------------
    GOLF WATCHLIST
@@ -475,17 +472,18 @@ const ICONS = {
   tv: <><rect x="3" y="6.5" width="18" height="12" rx="2" /><path d="M8.5 3.5L12 6.5l3.5-3" /></>,
 };
 
-/* Where to watch. US channels come with the ESPN data (NFL, golf);
-   Icelandic ones only from TV_ICELAND, filled in by hand. */
+/* Where to watch: UK channels from the rights deals (src/tv.js), US ones
+   per game from ESPN only when there is no UK answer. */
 function TvLine({ ev }) {
-  const here = TV_ICELAND[ev.sport === "football" ? ev.league : ev.sport];
+  const uk = ukTv(ev);
   const us = ev.tv || [];
-  if (!here && !us.length) return null;
+  if (!uk && !us.length) return null;
   return (
     <div className="row-tv">
       <Icon name="tv" size={13} />
-      {here && <span className="row-tv-here">{here}</span>}
-      {us.length > 0 && <span className="row-tv-us">US: {us.join(", ")}</span>}
+      {uk
+        ? <span className="row-tv-here">UK: {uk}</span>
+        : <span className="row-tv-us">US: {us.join(", ")}</span>}
     </div>
   );
 }
@@ -1924,6 +1922,12 @@ export default function App() {
             <strong>NFL:</strong> the full 272-game schedule loads from ESPN through our own
             server, scores stripped, refreshed hourly so flexed games stay accurate. If the
             feed is unavailable a built-in marquee schedule takes over.
+          </p>
+          <p>
+            <strong>TV:</strong> UK channels follow the broadcasting deals rather than a
+            per-match listing, which no free feed carries. Premier League: Sky Sports, TNT
+            Sports for Saturday 12:30s, nothing for Saturday 3pm kickoffs. A specially picked
+            game can differ. US channels, where shown, come per game from ESPN.
           </p>
         </footer>
       </div>
