@@ -9,6 +9,14 @@ import { mountNflIs } from "./nfl-is/index.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Don't announce the framework, and tell browsers to come straight to
+// https for a year (Railway already redirects http; this skips the hop).
+app.disable("x-powered-by");
+app.use((req, res, next) => {
+  res.set("Strict-Transport-Security", "max-age=31536000");
+  next();
+});
 const TOKEN = process.env.FOOTBALL_DATA_TOKEN;
 
 /* ------------------------------------------------------------
