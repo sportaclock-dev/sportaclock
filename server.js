@@ -91,7 +91,9 @@ async function footballHandler(comp, res) {
    Same spoiler shield applies: only kickoff time, team names,
    crests, and status leave this server. Scores never do.
    ------------------------------------------------------------ */
-const TSDB = "https://www.thesportsdb.com/api/v1/json/3";
+// TheSportsDB's free test key. The old "3" was permanently disabled in
+// 2026 (every call 403s); "123" is its replacement.
+const TSDB = "https://www.thesportsdb.com/api/v1/json/123";
 // "Icelandic Úrvalsdeild karla" (Besta deildin) — ID confirmed against
 // TheSportsDB. If it ever stops returning fixtures, the refresh falls
 // back to re-resolving the ID dynamically from their Iceland league list.
