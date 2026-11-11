@@ -854,10 +854,12 @@ function mineEvents(football, nflApi, golfApi) {
    Golf only enters the running at all if someone on your watchlist is in the
    field, and weekend rounds sit out because they're shielded by default —
    opening on a round you've chosen not to see would be odd. */
-function landingCandidates(sport, league, football, nflApi, golfApi, watchlist) {
+function landingCandidates(sport, league, football, nflApi, golfApi, watchlist, anyField = false) {
   const evs = buildEvents(sport, league, football, nflApi, golfApi);
   if (sport !== "golf") return evs;
-  if (!evs.some((ev) => ev.match || onList(ev.player, watchlist))) return [];
+  // anyField: the golf tab's own countdown. A week with none of your players
+  // still has a tournament on, and a bare dash there read as "season over".
+  if (!anyField && !evs.some((ev) => ev.match || onList(ev.player, watchlist))) return [];
 
   const firstOfRound = new Map();
   for (const ev of evs) {
@@ -1060,6 +1062,17 @@ export default function App() {
   }, [sport, golfApi]);
 
   const fieldPublished = (golfTourn?.fieldSize || 0) > 0;
+
+  /* The scope actually applied. The default is the top-10 watchlist, but in a
+     week none of them enters (most of the autumn) that left every tee sheet
+     blank. Then the default quietly becomes the whole field. An explicit
+     "your two" choice is left alone: its empty state says what to do. */
+  const watchlistInField = useMemo(
+    () => (golfApi.teeTimes || []).some((t) => onList(t.player, golfWatchlist)),
+    [golfApi, golfWatchlist],
+  );
+  const golfScopeEff = golfScope === "watchlist" && fieldPublished
+    && golfTourn?.format !== "match" && !watchlistInField ? "field" : golfScope;
   const weekendAvailable = (golfTourn?.roundsPublished || [])
     .some((r) => WEEKEND_ROUNDS.includes(r));
   const eyebrow = leagueCfg ? leagueCfg.eyebrow : cfg.eyebrow;
@@ -1074,7 +1087,7 @@ export default function App() {
     const q = query.trim().toLowerCase();
     return events.filter((ev) => {
       if (sport === "golf") {
-        if (!golfVisible(ev, golfScope, showWeekend, golfWatchlist)) return false;
+        if (!golfVisible(ev, golfScopeEff, showWeekend, golfWatchlist)) return false;
         if (typeof golfRound === "number" && ev.round !== golfRound) return false;
       }
       if (stage !== "All" && ev.stage !== stage) return false;
@@ -1083,7 +1096,7 @@ export default function App() {
       return [ev.home, ev.away, ev.title, ev.player, ev.sub, ev.venue, ev.city]
         .filter(Boolean).join(" ").toLowerCase().includes(q);
     });
-  }, [events, query, stage, teamFilter, sport, golfScope, showWeekend, golfRound,
+  }, [events, query, stage, teamFilter, sport, golfScopeEff, showWeekend, golfRound,
       golfWatchlist]);
 
   /* ---- re-bucket exactly when something starts or ends, not every second ---- */
@@ -1107,7 +1120,7 @@ export default function App() {
   const nextBySport = useMemo(() => {
     const out = {};
     for (const [s, l] of [["mine", null], ...ALL_VIEWS]) {
-      for (const ev of landingCandidates(s, l, football, nflApi, golfApi, golfWatchlist)) {
+      for (const ev of landingCandidates(s, l, football, nflApi, golfApi, golfWatchlist, s === "golf")) {
         const kind = classify(ev, boundary);
         const cur = out[s];
         if (kind === "live") { out[s] = { live: true, ev }; continue; }
@@ -1425,7 +1438,9 @@ export default function App() {
                 ) : (
                   <p className="tourn-no">
                     Neither {GOLF_PINNED.map((n) => n.split(" ").pop()).join(" nor ")} is in
-                    this field — your watchlist is shown instead.
+                    this field — {watchlistInField
+                      ? `the top ${GOLF_TOP_N} players who are in it are shown instead.`
+                      : `nor is anyone from the world top ${GOLF_TOP_N}, so the whole field is shown.`}
                   </p>
                 )}
               </>
@@ -1724,8 +1739,8 @@ export default function App() {
                 ].map(([id, label]) => (
                   <button
                     key={id}
-                    className={`chip${golfScope === id ? " is-on" : ""}`}
-                    aria-pressed={golfScope === id}
+                    className={`chip${golfScopeEff === id ? " is-on" : ""}`}
+                    aria-pressed={golfScopeEff === id}
                     onClick={() => setGolfScope(id)}
                   >
                     {label}
@@ -2211,7 +2226,7 @@ button { font-family:inherit; cursor:pointer }
 .row--mine { border-left-color:var(--accent) }
 /* a future tournament: informational, nothing to open yet */
 .row--sched { border-left-color:var(--line) }
-.row-hhmm--date { font-size:1.2rem; letter-spacing:0 }
+.row-hhmm--date { font-size:1.15rem; letter-spacing:0; white-space:nowrap }
 .later { margin-top:26px }
 .row--mine .ev-name { color:var(--text) }
 
