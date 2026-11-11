@@ -36,10 +36,13 @@
       rel="stylesheet"
     />
 
-    <link
-      rel="icon"
-      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⏱</text></svg>"
-    />
+    <!-- Icons: the stopwatch mark. apple-touch-icon is what iPad/iPhone use
+         for "Add to Home Screen"; without it iOS draws a grey letter. -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="apple-mobile-web-app-title" content="Sportaclock" />
   </head>
   <body style="margin: 0; background: #0c0d10">
     <div id="root"></div>

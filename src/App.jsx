@@ -480,7 +480,7 @@ function TvLine({ ev }) {
   if (!uk && !us.length) return null;
   return (
     <div className="row-tv">
-      <Icon name="tv" size={13} />
+      <Icon name="tv" size={16} />
       {uk
         ? <span className="row-tv-here">UK: {uk}</span>
         : <span className="row-tv-us">US: {us.join(", ")}</span>}
@@ -644,11 +644,11 @@ const EventRow = React.memo(function EventRow({ ev, clockLabel, off, showSport }
       <div className="row-main">
         <div className="row-meta">
           {showSport && ev.sport && (
-            <span className="sportmark" title={SPORTS[ev.sport]?.label}><Icon name={ev.sport} size={13} /></span>
+            <span className="sportmark" title={SPORTS[ev.sport]?.label}><Icon name={ev.sport} size={16} /></span>
           )}
           {ev.rank && <span className="rank" title={`World number ${ev.rank}`}>#{ev.rank}</span>}
           <StagePill ev={ev} />
-          {owl && <span className="owl"><Icon name="moon" size={11} /> night owl</span>}
+          {owl && <span className="owl"><Icon name="moon" size={14} /> night owl</span>}
         </div>
         <EventName ev={ev} crests={18} />
         {(ev.venue || ev.city) && (
@@ -1296,13 +1296,14 @@ export default function App() {
         {/* ---------- header ---------- */}
         <header className="head">
           <div className="brand">
+            <img className="brand-mark" src="/favicon.svg" alt="" width="38" height="38" />
             <h1 className="logo">SPORTACLOCK</h1>
             <p className="tagline">
               <span>Ready.</span> <span className="t-tick">Tick.</span> <span className="t-kick">Kick.</span>
             </p>
           </div>
           <p className="tzline">
-            <Icon name="clock" size={13} />
+            <Icon name="clock" size={16} />
             {tz}
             {feedLive && <span className="feed"> · live</span>}
           </p>
@@ -1318,7 +1319,7 @@ export default function App() {
                 aria-pressed={sport === id}
                 onClick={() => switchSport(id)}
               >
-                <span className="sport-top"><Icon name={id} size={17} /> {s.label}</span>
+                <span className="sport-top"><Icon name={id} size={19} /> {s.label}</span>
                 <span className="sport-next">
                   {nextBySport[id]?.live ? <span className="sport-live">● Live</span>
                     : nextBySport[id] ? <Countdown to={nextBySport[id].ev.kickoff} />
@@ -1575,7 +1576,7 @@ export default function App() {
                 <div className="row-time">
                   <time dateTime={ev.t} className="row-hhmm">{fmtTime(ev.kickoff)}</time>
                   <span className="row-dow" title={SPORTS[ev.sport]?.label}>
-                    <Icon name={ev.sport} size={12} /> {SPORTS[ev.sport]?.label}
+                    <Icon name={ev.sport} size={14} /> {SPORTS[ev.sport]?.label}
                   </span>
                 </div>
                 <div className="row-main">
@@ -1604,7 +1605,7 @@ export default function App() {
         {tab === "upcoming" && nextEvent && !golfOverview && (
           <section className="hero" aria-label={cfg.nextLabel}>
             <p className="hero-eyebrow">
-              {sport === "mine" && nextEvent.sport && <Icon name={nextEvent.sport} size={12} />}
+              {sport === "mine" && nextEvent.sport && <Icon name={nextEvent.sport} size={15} />}
               {cfg.nextLabel}
             </p>
             <HeroName ev={nextEvent} />
@@ -1624,7 +1625,7 @@ export default function App() {
             <div className="hero-when">
               <time dateTime={nextEvent.t} className="hero-hhmm">{fmtTime(nextEvent.kickoff)}</time>
               <span className="hero-date">{fmtDateHeading(nextEvent.kickoff)}</span>
-              {isNightOwl(nextEvent.kickoff) && <span className="owl"><Icon name="moon" size={12} /> night owl</span>}
+              {isNightOwl(nextEvent.kickoff) && <span className="owl"><Icon name="moon" size={14} /> night owl</span>}
             </div>
 
             <HeroClock to={nextEvent.kickoff} />
@@ -1676,7 +1677,7 @@ export default function App() {
             aria-pressed={tab === "catchup"}
             onClick={() => setTab("catchup")}
           >
-            <Icon name="shield" size={14} /> Catch up <span className="count">{buckets.finished.length}</span>
+            <Icon name="shield" size={16} /> Catch up <span className="count">{buckets.finished.length}</span>
           </button>
         </nav>
 
@@ -1833,7 +1834,7 @@ export default function App() {
         {tab === "catchup" && (
           <section>
             <div className="shield">
-              <p className="shield-title"><Icon name="shield" size={15} /> Spoiler shield is on</p>
+              <p className="shield-title"><Icon name="shield" size={18} /> Spoiler shield is on</p>
               <p className="shield-body">
                 No results shown — only which events have finished. Scores are stripped
                 on the server, so nothing that reaches this page can spoil a match.
@@ -1884,7 +1885,7 @@ export default function App() {
                         target="_blank"
                         rel="noopener noreferrer"
                       >
-                        <Icon name="warn" size={13} /> YouTube highlights
+                        <Icon name="warn" size={15} /> YouTube highlights
                       </a>
                     )}
                   </div>
@@ -1953,19 +1954,21 @@ function Styles() {
 /* graphite body, aluminium readouts, one red mark */
 .theme-sline {
   --bg:#0C0D10; --panel:#14161A; --panel-2:#0F1114;
-  --line:#23262C; --line-2:#33373F;
-  --text:#F2F3F5; --muted:#A0A6AF; --dim:#767D87; --faint:#464C55;
-  --accent:#E10A24; --accent-soft:#F08A96; --accent-wash:rgba(225,10,36,0.08);
+  --line:#2B2F36; --line-2:#444A54;
+  --text:#F5F6F8; --muted:#C3C8D0; --dim:#A3AAB4; --faint:#8A919C;
+  --accent:#E10A24; --accent-soft:#FF9AA5; --accent-wash:rgba(225,10,36,0.14);
+  --accent-text:#FF6373;
   --accent-glow:rgba(225,10,36,0.10);
-  --metal:#C9CED6; --clock:#F2F3F5; --live:#FF3B4A;
+  --metal:#E3E6EB; --clock:#FFFFFF; --live:#FF5261;
   --on-accent:#FFFFFF;
 }
 /* the original navy, green and amber */
 .theme-classic {
   --bg:#0B1220; --panel:#121C2E; --panel-2:#0E1626;
-  --line:#1E2B42; --line-2:#2A3A57;
-  --text:#E8EDF4; --muted:#9FB0C6; --dim:#7C8BA1; --faint:#3A4A63;
-  --accent:#2F9E68; --accent-soft:#8FB89F; --accent-wash:rgba(47,158,104,0.10);
+  --line:#22304A; --line-2:#3A4C6E;
+  --text:#EEF2F8; --muted:#BAC7D9; --dim:#9DACC2; --faint:#8494AD;
+  --accent:#2F9E68; --accent-soft:#A5D1B7; --accent-wash:rgba(47,158,104,0.16);
+  --accent-text:#5FCB96;
   --accent-glow:rgba(255,209,102,0.10);
   --metal:#E8EDF4; --clock:#FFD166; --live:#E25C5C;
   --on-accent:#0B1220;
@@ -1978,13 +1981,14 @@ function Styles() {
 * { box-sizing:border-box }
 .page {
   min-height:100vh; background:var(--bg); color:var(--text);
-  font-family:var(--sans);
+  font-family:var(--sans); font-size:1.0625rem; line-height:1.4;
+  -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
   background-image:radial-gradient(ellipse 70% 38% at 50% -6%, var(--accent-glow), transparent 72%);
 }
-.wrap { max-width:880px; margin:0 auto; padding:0 16px 80px }
+.wrap { max-width:960px; margin:0 auto; padding:0 18px 80px }
 p { margin:0 }
 button { font-family:inherit; cursor:pointer }
-:focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:4px }
+:focus-visible { outline:3px solid var(--accent-text); outline-offset:2px; border-radius:4px }
 
 /* ---------- header ----------
    One line: the name, the promise, and whose clock you're reading.
@@ -1993,12 +1997,13 @@ button { font-family:inherit; cursor:pointer }
   display:flex; align-items:center; justify-content:space-between;
   gap:6px 16px; flex-wrap:wrap; padding:20px 0 14px;
 }
-.brand { display:flex; align-items:baseline; gap:6px 14px; flex-wrap:wrap }
+.brand { display:flex; align-items:center; gap:6px 14px; flex-wrap:wrap }
+.brand-mark { flex:none; width:38px; height:38px; border-radius:9px }
 .ic { flex:none; vertical-align:-0.18em }
 /* the sport's context line, just under the tabs */
 .context {
   display:flex; align-items:center; margin-top:14px;
-  font-size:0.66rem; letter-spacing:0.22em; text-transform:uppercase;
+  font-size:0.84rem; letter-spacing:0.08em; text-transform:uppercase;
   color:var(--muted); font-weight:700;
 }
 /* the badge: the one place the accent appears at full strength up top */
@@ -2010,12 +2015,12 @@ button { font-family:inherit; cursor:pointer }
   font-weight:900; font-size:clamp(1.5rem,5.4vw,2.15rem); margin:0; line-height:1;
   letter-spacing:-0.025em;
 }
-.tagline { font-weight:700; font-size:0.86rem; letter-spacing:0.06em }
-.t-tick { color:var(--accent); font-family:var(--mono) }
+.tagline { font-weight:700; font-size:0.98rem; letter-spacing:0.04em }
+.t-tick { color:var(--accent-text); font-family:var(--mono) }
 .t-kick { color:var(--metal) }
 .tzline {
   display:inline-flex; align-items:center; gap:6px;
-  color:var(--dim); font-size:0.72rem;
+  color:var(--muted); font-size:0.9rem;
 }
 .feed { color:var(--accent-soft) }
 
@@ -2030,40 +2035,40 @@ button { font-family:inherit; cursor:pointer }
 }
 .sports { display:flex; gap:8px }
 .sport {
-  flex:1; min-width:0; padding:9px 6px 8px; border-radius:8px; white-space:nowrap;
-  background:transparent; border:1px solid var(--line); color:var(--dim);
-  font-weight:700; font-size:0.82rem; letter-spacing:0.04em;
-  display:flex; flex-direction:column; align-items:center; gap:4px;
+  flex:1; min-width:0; padding:11px 6px 10px; border-radius:10px; white-space:nowrap;
+  background:transparent; border:1px solid var(--line-2); color:var(--muted);
+  font-weight:700; font-size:1rem; letter-spacing:0.02em;
+  display:flex; flex-direction:column; align-items:center; gap:6px;
   transition:border-color .16s, color .16s, background .16s;
 }
 .sport-top { display:inline-flex; align-items:center; gap:7px }
 /* how long until this sport's next thing: the tab bar as a dashboard */
-.sport-next { font-size:0.7rem; line-height:1; color:var(--faint); min-height:0.8rem }
-.sport-next .cd { font-size:0.7rem; font-weight:600; color:var(--dim) }
-.sport-next .cd i { color:var(--faint) }
+.sport-next { font-size:0.88rem; line-height:1; color:var(--dim); min-height:0.9rem }
+.sport-next .cd { font-size:0.88rem; font-weight:600; color:var(--muted) }
+.sport-next .cd i { color:var(--dim) }
 .sport.is-on .sport-next .cd { color:var(--clock) }
-.sport.is-on .sport-next .cd i { color:var(--accent) }
-.sport-live { color:var(--live); font-weight:900; letter-spacing:0.12em; font-size:0.62rem; animation:pulse 1.6s infinite }
+.sport.is-on .sport-next .cd i { color:var(--accent-text) }
+.sport-live { color:var(--live); font-weight:900; letter-spacing:0.08em; font-size:0.8rem; animation:pulse 1.6s infinite }
 .sport:hover { color:var(--text); border-color:var(--line-2) }
 .sport.is-on {
-  background:var(--panel); border-color:var(--line-2); color:var(--text);
-  box-shadow:inset 0 -2px 0 var(--accent);
+  background:var(--panel); border-color:var(--dim); color:var(--text);
+  box-shadow:inset 0 -3px 0 var(--accent);
 }
-.chips { display:flex; gap:6px; overflow-x:auto; padding-bottom:2px; scrollbar-width:none }
+.chips { display:flex; gap:8px; overflow-x:auto; padding-bottom:2px; scrollbar-width:none }
 .chips::-webkit-scrollbar { display:none }
-.nav .chips { margin-top:8px }
+.nav .chips { margin-top:10px }
 .chip {
-  padding:5px 12px; border-radius:20px; font-size:0.72rem; font-weight:600;
+  padding:8px 16px; border-radius:22px; font-size:0.92rem; font-weight:600;
   white-space:nowrap; background:transparent;
-  border:1px solid var(--line); color:var(--dim);
+  border:1px solid var(--line-2); color:var(--muted);
   transition:border-color .16s, color .16s, background .16s;
 }
 .chip:hover { color:var(--text) }
-.chip.is-on { background:var(--accent-wash); border-color:var(--accent); color:var(--text) }
+.chip.is-on { background:var(--accent-wash); border-color:var(--accent-text); color:var(--text); font-weight:700 }
 
 .jumped {
-  margin-top:12px; font-size:0.74rem; color:var(--dim);
-  border-left:2px solid var(--accent); padding-left:10px;
+  margin-top:12px; font-size:0.9rem; color:var(--muted);
+  border-left:3px solid var(--accent); padding-left:10px;
 }
 .jumped strong { color:var(--text); font-weight:600 }
 
@@ -2073,11 +2078,11 @@ button { font-family:inherit; cursor:pointer }
   background:var(--panel); border:1px solid var(--line-2); border-radius:12px;
 }
 .hero-eyebrow {
-  font-size:0.65rem; letter-spacing:0.24em; text-transform:uppercase;
-  color:var(--dim); margin-bottom:12px;
+  font-size:0.84rem; letter-spacing:0.1em; text-transform:uppercase; font-weight:700;
+  color:var(--muted); margin-bottom:14px;
 }
 .hero-name { margin:0 0 8px }
-.hero-ev { font-weight:700; font-size:clamp(1.2rem,5vw,1.75rem) }
+.hero-ev { font-weight:700; font-size:clamp(1.4rem,5.4vw,2.05rem); line-height:1.2 }
 /* crests big, names under them, "vs" between */
 .hero-teams {
   display:grid; grid-template-columns:1fr auto 1fr; align-items:start; gap:12px;
@@ -2085,16 +2090,16 @@ button { font-family:inherit; cursor:pointer }
 }
 .hero-team {
   display:flex; flex-direction:column; align-items:center; gap:10px;
-  font-weight:700; font-size:clamp(1rem,4.2vw,1.4rem); line-height:1.2;
+  font-weight:700; font-size:clamp(1.1rem,4.4vw,1.6rem); line-height:1.2;
 }
 .hero-team .crest-ic { width:clamp(44px,12vw,64px); height:clamp(44px,12vw,64px) }
 .hero-vs {
-  align-self:center; margin-top:-1.4em; color:var(--faint);
-  font-family:var(--mono); font-size:0.8rem; letter-spacing:0.12em; text-transform:uppercase;
+  align-self:center; margin-top:-1.4em; color:var(--dim);
+  font-family:var(--mono); font-size:0.95rem; letter-spacing:0.12em; text-transform:uppercase;
 }
 .hero-meta {
   display:flex; gap:10px; align-items:center; justify-content:center;
-  flex-wrap:wrap; color:var(--muted); font-size:0.85rem;
+  flex-wrap:wrap; color:var(--muted); font-size:1.02rem;
 }
 /* the signature: kickoff time as an instrument readout */
 .hero-when {
@@ -2105,10 +2110,10 @@ button { font-family:inherit; cursor:pointer }
 }
 .hero-hhmm {
   font-family:var(--mono); font-weight:600; font-variant-numeric:tabular-nums;
-  font-size:clamp(1.85rem,7vw,2.55rem); line-height:1; letter-spacing:0.01em;
-  color:var(--metal);
+  font-size:clamp(2.1rem,7.6vw,2.9rem); line-height:1; letter-spacing:0.01em;
+  color:var(--text);
 }
-.hero-date { color:var(--muted); font-size:0.85rem; font-weight:600 }
+.hero-date { color:var(--text); font-size:1.05rem; font-weight:600 }
 .hero-clock { display:flex; gap:14px; align-items:flex-end; justify-content:center; margin-top:16px }
 .hero-cell { text-align:center }
 .hero-num {
@@ -2117,32 +2122,32 @@ button { font-family:inherit; cursor:pointer }
   letter-spacing:0.02em;
 }
 .hero-unit {
-  font-size:0.6rem; letter-spacing:0.15em; color:var(--dim);
-  text-transform:uppercase; margin-top:7px;
+  font-size:0.8rem; letter-spacing:0.1em; color:var(--muted); font-weight:600;
+  text-transform:uppercase; margin-top:8px;
 }
 .hero-colon {
-  color:var(--accent); font-weight:600; font-family:var(--mono);
-  font-size:clamp(1.5rem,6vw,2.8rem); padding-bottom:20px;
+  color:var(--accent-text); font-weight:600; font-family:var(--mono);
+  font-size:clamp(1.5rem,6vw,2.8rem); padding-bottom:24px;
   animation:blink 1s steps(1) infinite;
 }
-.hero-sub { color:var(--muted); font-size:0.82rem; margin-top:14px }
+.hero-sub { color:var(--muted); font-size:1rem; margin-top:16px }
 
 /* ---------- tabs ---------- */
 .tabs { display:flex; gap:8px; margin:18px 0 14px }
 .tab {
-  flex:1; padding:12px 8px; border-radius:7px;
-  background:transparent; border:1px solid var(--line); color:var(--dim);
-  font-weight:700; font-size:0.85rem; letter-spacing:0.03em;
+  flex:1; padding:14px 8px; border-radius:9px;
+  background:transparent; border:1px solid var(--line-2); color:var(--muted);
+  font-weight:700; font-size:1.02rem; letter-spacing:0.02em;
   transition:border-color .16s, color .16s, background .16s;
 }
 .tab:hover { color:var(--text) }
 .tab.is-on {
-  background:var(--panel); border-color:var(--line-2); color:var(--text);
-  box-shadow:inset 0 -2px 0 var(--accent);
+  background:var(--panel); border-color:var(--dim); color:var(--text);
+  box-shadow:inset 0 -3px 0 var(--accent);
 }
 .count {
   display:inline-block; margin-left:6px; padding:1px 7px; border-radius:10px;
-  background:var(--line); color:var(--muted); font-size:0.72rem;
+  background:var(--line); color:var(--text); font-size:0.88rem;
   font-family:var(--mono); font-variant-numeric:tabular-nums;
 }
 .tab.is-on .count { background:var(--accent-wash); color:var(--text) }
@@ -2150,46 +2155,46 @@ button { font-family:inherit; cursor:pointer }
 /* ---------- filters ---------- */
 .filters { display:flex; flex-direction:column; gap:10px; margin-bottom:18px }
 .search {
-  width:100%; padding:10px 12px; border-radius:7px;
-  background:var(--panel-2); border:1px solid var(--line); color:var(--text);
-  font-family:inherit; font-size:0.9rem; outline:none;
+  width:100%; padding:13px 14px; border-radius:9px;
+  background:var(--panel-2); border:1px solid var(--line-2); color:var(--text);
+  font-family:inherit; font-size:1.02rem; outline:none;
 }
-.search::placeholder { color:var(--faint) }
-.search:focus { border-color:var(--line-2) }
-.crests { display:flex; flex-wrap:wrap; gap:6px }
+.search::placeholder { color:var(--dim) }
+.search:focus { border-color:var(--muted) }
+.crests { display:flex; flex-wrap:wrap; gap:8px }
 .crest {
-  padding:5px; border-radius:7px; line-height:0;
-  background:transparent; border:1px solid var(--line);
+  padding:6px; border-radius:9px; line-height:0;
+  background:transparent; border:1px solid var(--line-2);
   transition:border-color .16s, opacity .16s;
 }
-.crest img { width:26px; height:26px; object-fit:contain; display:block }
-.crest:hover { border-color:var(--line-2) }
+.crest img { width:32px; height:32px; object-fit:contain; display:block }
+.crest:hover { border-color:var(--muted) }
 /* your club, held at the front of the bar */
-.crest--mine { border-bottom:2px solid var(--accent) }
-.crest.is-on { background:var(--accent-wash); border-color:var(--accent) }
+.crest--mine { border-bottom:3px solid var(--accent) }
+.crest.is-on { background:var(--accent-wash); border-color:var(--accent-text) }
 .crest.is-off { opacity:0.4 }
-.filternote { font-size:0.74rem; color:var(--dim) }
+.filternote { font-size:0.9rem; color:var(--muted); line-height:1.5 }
 .link {
   background:none; border:none; padding:0; color:var(--accent-soft);
   font-size:inherit; font-weight:600; text-decoration:underline;
 }
 
 /* ---------- day groups ---------- */
-.day { margin-bottom:22px }
+.day { margin-bottom:28px }
 .dayhead {
-  font-size:0.7rem; letter-spacing:0.2em; text-transform:uppercase;
-  color:var(--muted); font-weight:700; margin:0 0 8px;
-  border-bottom:1px solid var(--line); padding-bottom:6px;
+  font-size:1.02rem; letter-spacing:0.01em;
+  color:var(--text); font-weight:700; margin:0 0 10px;
+  border-bottom:1px solid var(--line-2); padding-bottom:8px;
 }
-.dayhead--off { color:var(--dim) }
+.dayhead--off { color:var(--muted) }
 
 /* ---------- the departure-board row ---------- */
 .row {
-  display:grid; grid-template-columns:78px 1fr auto;
-  gap:16px; align-items:center;
-  padding:13px 16px 13px 13px; margin-bottom:8px;
+  display:grid; grid-template-columns:96px 1fr auto;
+  gap:18px; align-items:center;
+  padding:16px 18px 16px 15px; margin-bottom:10px;
   background:var(--panel); border:1px solid var(--line);
-  border-left:3px solid transparent; border-radius:9px;
+  border-left:4px solid transparent; border-radius:11px;
   transition:border-color .16s, background .16s;
 }
 .row:hover {
@@ -2198,7 +2203,7 @@ button { font-family:inherit; cursor:pointer }
   background:color-mix(in srgb, var(--panel) 88%, var(--text));
 }
 .row--owl { border-left-color:var(--accent) }
-.row--off { opacity:0.66 }
+.row--off { opacity:0.78 }
 .row--live { border-color:var(--live); border-left-color:var(--live) }
 .row--done { border-left-color:var(--line-2) }
 /* one of your players — golf tee sheets stay chronological, so the rail
@@ -2206,79 +2211,79 @@ button { font-family:inherit; cursor:pointer }
 .row--mine { border-left-color:var(--accent) }
 /* a future tournament: informational, nothing to open yet */
 .row--sched { border-left-color:var(--line) }
-.row-hhmm--date { font-size:1.05rem; letter-spacing:0 }
+.row-hhmm--date { font-size:1.2rem; letter-spacing:0 }
 .later { margin-top:26px }
 .row--mine .ev-name { color:var(--text) }
 
 .row-time { text-align:left }
 .row-hhmm {
   display:block; font-family:var(--mono); font-weight:600;
-  font-variant-numeric:tabular-nums; font-size:1.5rem; line-height:1.05;
-  letter-spacing:0.01em; color:var(--metal);
+  font-variant-numeric:tabular-nums; font-size:1.8rem; line-height:1.05;
+  letter-spacing:0; color:var(--text);
 }
-.row-hhmm--tbd { color:var(--faint) }
+.row-hhmm--tbd { color:var(--dim) }
 .row-dow {
-  display:block; font-size:0.6rem; letter-spacing:0.16em; text-transform:uppercase;
-  color:var(--dim); margin-top:4px;
+  display:block; font-size:0.82rem; letter-spacing:0.08em; text-transform:uppercase;
+  color:var(--muted); margin-top:5px; font-weight:600;
 }
 .row-main { min-width:0 }
-.row-meta { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:4px }
-.row-where { color:var(--muted); font-size:0.82rem; margin-top:3px }
+.row-meta { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:5px }
+.row-where { color:var(--muted); font-size:0.97rem; margin-top:4px }
 /* context, not an alarm: red is kept for night games and live ones */
-.row-sub { color:var(--dim); font-size:0.8rem; margin-top:3px }
+.row-sub { color:var(--dim); font-size:0.93rem; margin-top:3px }
 /* a place name is context, not a highlight — quieter than the course above it */
-.row-place { color:var(--dim); font-size:0.78rem; margin-top:2px }
-.ev-name { font-weight:700; font-size:0.98rem }
+.row-place { color:var(--dim); font-size:0.92rem; margin-top:2px }
+.ev-name { font-weight:700; font-size:1.18rem; line-height:1.25 }
 .team { display:inline-flex; align-items:center; gap:7px }
 .crest-ic { flex:none; object-fit:contain }
-.ev-vs { color:var(--faint); font-weight:500 }
+.ev-vs { color:var(--dim); font-weight:500 }
 
-.row-clock { display:flex; flex-direction:column; align-items:flex-end; flex-shrink:0; gap:3px }
+.row-clock { display:flex; flex-direction:column; align-items:flex-end; flex-shrink:0; gap:4px }
 .cd {
   font-family:var(--mono); font-variant-numeric:tabular-nums; font-weight:600;
-  font-size:1rem; color:var(--clock); white-space:nowrap;
+  font-size:1.22rem; color:var(--clock); white-space:nowrap;
 }
-.cd i { color:var(--accent); font-style:normal; font-weight:500 }
+.cd i { color:var(--accent-text); font-style:normal; font-weight:500 }
 .row-clock-label {
-  font-size:0.58rem; letter-spacing:0.12em; text-transform:uppercase;
-  color:var(--faint);
+  font-size:0.8rem; letter-spacing:0.04em;
+  color:var(--dim);
 }
 .off-badge {
-  font-size:0.62rem; letter-spacing:0.12em; text-transform:uppercase;
-  font-weight:700; color:var(--muted); border:1px solid var(--line-2);
-  border-radius:4px; padding:3px 8px; white-space:nowrap;
+  font-size:0.82rem; letter-spacing:0.06em; text-transform:uppercase;
+  font-weight:700; color:var(--text); border:1px solid var(--dim);
+  border-radius:5px; padding:4px 9px; white-space:nowrap;
 }
 
 .pill {
-  font-size:0.62rem; letter-spacing:0.13em; text-transform:uppercase;
-  color:var(--muted); border:1px solid var(--line-2); border-radius:3px;
-  padding:2px 7px; white-space:nowrap;
+  font-size:0.8rem; letter-spacing:0.05em; text-transform:uppercase; font-weight:600;
+  color:var(--muted); border:1px solid var(--line-2); border-radius:4px;
+  padding:2px 8px; white-space:nowrap;
 }
 .rank {
-  font-family:var(--mono); font-size:0.62rem; font-weight:600;
-  color:var(--accent); border:1px solid var(--accent); border-radius:3px;
-  padding:2px 5px; white-space:nowrap; font-variant-numeric:tabular-nums;
+  font-family:var(--mono); font-size:0.82rem; font-weight:600;
+  color:var(--accent-text); border:1px solid var(--accent-text); border-radius:4px;
+  padding:2px 6px; white-space:nowrap; font-variant-numeric:tabular-nums;
 }
 .sportmark { display:inline-flex; color:var(--muted) }
 .row-tv {
   display:flex; align-items:center; gap:4px 10px; flex-wrap:wrap;
-  font-size:0.76rem; color:var(--muted); margin-top:5px;
+  font-size:0.93rem; color:var(--muted); margin-top:6px;
 }
 .row-tv .ic { color:var(--dim) }
 .row-tv-here { color:var(--text); font-weight:600 }
-.row-tv-us { color:var(--dim) }
+.row-tv-us { color:var(--muted) }
 .hero-tv .row-tv { justify-content:center; margin-top:10px }
 .hero-eyebrow .ic { vertical-align:-0.2em; margin-right:6px }
 .onnow { margin-top:16px }
-.onnow .row { padding-top:10px; padding-bottom:10px; margin-bottom:6px }
+.onnow .row { padding-top:12px; padding-bottom:12px; margin-bottom:8px }
 .onnow .row-dow { display:inline-flex; align-items:center; gap:4px }
-.pill--major { color:var(--text); border-color:var(--accent); margin-left:10px; vertical-align:middle }
+.pill--major { color:var(--text); border-color:var(--accent-text); margin-left:10px; vertical-align:middle }
 .pill--team { margin-left:10px; vertical-align:middle }
 .owl {
   display:inline-flex; align-items:center; gap:4px;
-  font-size:0.62rem; letter-spacing:0.1em; color:var(--accent); text-transform:uppercase;
+  font-size:0.8rem; letter-spacing:0.05em; font-weight:700; color:var(--accent-text); text-transform:uppercase;
 }
-.done { font-size:0.62rem; letter-spacing:0.1em; color:var(--dim); text-transform:uppercase }
+.done { font-size:0.85rem; letter-spacing:0.03em; color:var(--muted) }
 
 /* ---------- golf tournament banner ---------- */
 .tourn {
@@ -2287,15 +2292,15 @@ button { font-family:inherit; cursor:pointer }
   border-left:3px solid var(--accent); border-radius:9px;
 }
 .tourn-eyebrow {
-  font-size:0.64rem; letter-spacing:0.2em; text-transform:uppercase;
+  font-size:0.84rem; letter-spacing:0.08em; text-transform:uppercase;
   color:var(--accent-soft); font-weight:700; margin-bottom:6px;
 }
-.tourn-name { margin:0 0 4px; font-size:1.15rem; font-weight:700 }
-.tourn-course { color:var(--text); font-size:0.9rem; font-weight:600; margin-top:2px }
-.tourn-where { color:var(--muted); font-size:0.8rem; margin-top:3px }
-.tourn-field { color:var(--dim); font-size:0.76rem; margin-top:4px }
-.tourn-yes { color:var(--accent-soft); font-size:0.8rem; margin-top:8px; font-weight:600 }
-.tourn-no { color:var(--muted); font-size:0.8rem; margin-top:8px; line-height:1.5 }
+.tourn-name { margin:0 0 4px; font-size:1.4rem; font-weight:700; line-height:1.25 }
+.tourn-course { color:var(--text); font-size:1.05rem; font-weight:600; margin-top:2px }
+.tourn-where { color:var(--muted); font-size:0.97rem; margin-top:3px }
+.tourn-field { color:var(--muted); font-size:0.93rem; margin-top:5px; line-height:1.5 }
+.tourn-yes { color:var(--accent-soft); font-size:0.97rem; margin-top:8px; font-weight:600 }
+.tourn-no { color:var(--muted); font-size:0.97rem; margin-top:8px; line-height:1.5 }
 .tourn-wait {
   display:flex; gap:16px; align-items:center; justify-content:space-between;
   flex-wrap:wrap; margin-top:6px;
@@ -2309,28 +2314,28 @@ button { font-family:inherit; cursor:pointer }
 .tourn--slim { padding:13px 16px }
 .back {
   background:none; border:none; padding:0 0 8px; color:var(--accent-soft);
-  font-size:0.74rem; font-weight:700; letter-spacing:0.04em;
+  font-size:0.95rem; font-weight:700; letter-spacing:0.02em;
 }
 .back:hover { color:var(--text) }
-.seeall { margin-top:4px; font-size:0.76rem }
+.seeall { margin-top:6px; font-size:0.95rem }
 
 /* tappable rows for the golf drill-down */
-.row--tap { cursor:pointer; position:relative; padding-right:34px }
+.row--tap { cursor:pointer; position:relative; padding-right:40px }
 .row--tap:hover { border-color:var(--accent) }
 .row-go {
   position:absolute; right:14px; top:50%; transform:translateY(-50%);
-  color:var(--faint); font-size:1.3rem; line-height:1;
+  color:var(--muted); font-size:1.7rem; line-height:1;
 }
-.row--tap:hover .row-go { color:var(--accent) }
+.row--tap:hover .row-go { color:var(--accent-text) }
 
 /* ---------- live ---------- */
 .livewrap { margin-top:16px }
 .livetag {
-  color:var(--live); font-weight:900; font-size:0.72rem; letter-spacing:0.18em;
+  color:var(--live); font-weight:900; font-size:0.92rem; letter-spacing:0.08em;
   white-space:nowrap; animation:pulse 1.6s infinite;
 }
 .elapsed {
-  font-family:var(--mono); font-size:0.72rem; color:var(--muted);
+  font-family:var(--mono); font-size:0.85rem; color:var(--muted);
   font-variant-numeric:tabular-nums; white-space:nowrap;
 }
 
@@ -2342,28 +2347,28 @@ button { font-family:inherit; cursor:pointer }
 }
 .shield-title {
   display:flex; align-items:center; gap:7px;
-  font-weight:700; font-size:0.85rem; margin-bottom:5px;
+  font-weight:700; font-size:1.05rem; margin-bottom:6px;
 }
-.shield-title .ic { color:var(--accent) }
+.shield-title .ic { color:var(--accent-text) }
 .tab .ic { vertical-align:-0.15em }
 .replay .ic { vertical-align:-0.2em }
-.shield-body { color:var(--muted); font-size:0.78rem; line-height:1.6; max-width:64ch }
+.shield-body { color:var(--muted); font-size:0.97rem; line-height:1.55; max-width:64ch }
 .toggle {
   display:flex; gap:8px; align-items:flex-start; margin-top:12px;
-  font-size:0.74rem; color:var(--dim); cursor:pointer; line-height:1.45;
+  font-size:0.95rem; color:var(--muted); cursor:pointer; line-height:1.45;
 }
-.toggle input { margin-top:2px; accent-color:var(--accent) }
+.toggle input { margin-top:2px; width:20px; height:20px; flex:none; accent-color:var(--accent) }
 .replays { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px }
 .replay {
-  font-size:0.74rem; font-weight:700; text-decoration:none; border-radius:5px;
-  padding:7px 12px; color:var(--on-accent); background:var(--accent);
+  font-size:0.93rem; font-weight:700; text-decoration:none; border-radius:7px;
+  padding:9px 14px; color:var(--on-accent); background:var(--accent);
   border:1px solid var(--accent);
 }
 .replay:hover { filter:brightness(1.12) }
-.replay--warn { color:var(--muted); background:transparent; border-color:var(--line-2) }
+.replay--warn { color:var(--text); background:transparent; border-color:var(--dim) }
 
 .empty {
-  padding:20px 16px; text-align:center; color:var(--dim); font-size:0.86rem;
+  padding:22px 18px; text-align:center; color:var(--muted); font-size:1rem;
   line-height:1.55; background:var(--panel); border:1px solid var(--line);
   border-radius:9px;
 }
@@ -2371,10 +2376,10 @@ button { font-family:inherit; cursor:pointer }
 /* ---------- footer ---------- */
 .foot {
   margin-top:44px; padding-top:16px; border-top:1px solid var(--line);
-  color:var(--faint); font-size:0.68rem; line-height:1.7;
+  color:var(--dim); font-size:0.9rem; line-height:1.6;
   display:flex; flex-direction:column; gap:8px;
 }
-.foot strong { color:var(--dim) }
+.foot strong { color:var(--text) }
 
 @keyframes pulse { 0%,100% { opacity:1 } 50% { opacity:0.4 } }
 @keyframes blink { 0%,49% { opacity:1 } 50%,100% { opacity:0.22 } }
@@ -2382,16 +2387,20 @@ button { font-family:inherit; cursor:pointer }
 
 /* ---------- mobile ---------- */
 @media (max-width:560px) {
-  .row { grid-template-columns:62px 1fr; row-gap:10px; padding:13px }
-  .row--tap { padding-right:30px }
-  .row-hhmm { font-size:1.3rem }
+  .row { grid-template-columns:76px 1fr; gap:14px; row-gap:10px; padding:14px }
+  .row--tap { padding-right:34px }
+  .row-hhmm { font-size:1.5rem }
+  .ev-name { font-size:1.1rem }
+  .brand-mark { width:32px; height:32px }
   .row-clock { grid-column:2; align-items:flex-start }
   /* five tabs on a phone: widths follow the labels instead of fifths */
-  .sport { flex:1 1 auto; font-size:0.74rem; padding:8px 4px 7px }
+  .sport { flex:1 1 auto; font-size:0.86rem; padding:9px 4px 8px }
+  .sport-next, .sport-next .cd { font-size:0.8rem }
+  .sports { gap:6px }
   /* on-now rows stay three columns on a phone; the elapsed time can go */
-  .onnow .row { grid-template-columns:58px 1fr auto; gap:10px; row-gap:0 }
+  .onnow .row { grid-template-columns:68px 1fr auto; gap:10px; row-gap:0 }
   .onnow .row-clock { grid-column:auto; align-items:flex-end }
-  .onnow .row-hhmm { font-size:1.15rem }
+  .onnow .row-hhmm { font-size:1.3rem }
   .onnow .elapsed, .onnow .row-clock-label { display:none }
   .sport-top { gap:5px }
   .sport-top .ic { width:15px; height:15px }
